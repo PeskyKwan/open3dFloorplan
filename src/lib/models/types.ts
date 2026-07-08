@@ -30,6 +30,8 @@ export interface Room {
   roomType?: RoomCategory;
   /** Custom label position offset from centroid (in world units) */
   labelOffset?: Point;
+  /** Ordered boundary vertices from room detection (reliable; walls[] alone can be ambiguous on noisy scans) */
+  polygon?: Point[];
 }
 
 export interface Door {

@@ -11,6 +11,10 @@
   import { importRoomPlan, extractRoomJsonFromZip, ORTHO_VERSION } from '$lib/utils/roomplanImport';
   import { currentProject, loadProject, importFloorIntoCurrentProject, createDefaultProject } from '$lib/stores/project';
   import type { Project } from '$lib/models/types';
+  import { detectedRoomsStore, moveFurniture, setFurnitureRotation, commitFurnitureMove, addFurniture, updateFurniture } from '$lib/stores/project';
+  import { arrangeRoom, pointInPolygon, recommendPlacementForRoom } from '$lib/utils/placementRecommender';
+  import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
+  import { getCatalogItem } from '$lib/utils/furnitureCatalog';
 
   // AreaSummaryPanel moved to top bar dialog
   let activeTab = $state<'draw' | 'rooms' | 'objects'>('draw');
@@ -28,6 +32,91 @@
 
   // RoomPlan import dialog state
   let showImportDialog = $state(false);
+
+  // ── Auto-arrange whole room (feature B) ──
+  let bpFloor = $state<any>(null);
+  activeFloor.subscribe((f) => { bpFloor = f; });
+  let bpRooms = $state<any[]>([]);
+  detectedRoomsStore.subscribe((r) => { bpRooms = r; });
+  let arranging = $state(false);
+  let arrangeMsg = $state('');
+  function onAutoArrange() {
+    const floor = bpFloor;
+    if (!floor) return;
+    const rooms = (bpRooms.length ? bpRooms : floor.rooms) ?? [];
+    if (!rooms.length) { arrangeMsg = '未偵測到房間'; return; }
+    arranging = true;
+    try {
+      // Assign each furniture to a room: inside its polygon, else nearest centroid.
+      const polys = rooms.map((r: any) => ({ r, poly: getRoomPolygon(r, floor.walls) }));
+      const buckets = new Map<string, any[]>();
+      for (const f of floor.furniture) {
+        let target = polys.find((p: any) => p.poly.length >= 3 && pointInPolygon(f.position, p.poly))?.r;
+        if (!target) {
+          let bestD = Infinity;
+          for (const p of polys) {
+            if (p.poly.length < 3) continue;
+            const c = roomCentroid(p.poly);
+            const d = Math.hypot(c.x - f.position.x, c.y - f.position.y);
+            if (d < bestD) { bestD = d; target = p.r; }
+          }
+        }
+        if (!target) continue;
+        if (!buckets.has(target.id)) buckets.set(target.id, []);
+        buckets.get(target.id)!.push(f);
+      }
+      let moved = 0, failed = 0;
+      for (const room of rooms) {
+        const fs = buckets.get(room.id) ?? [];
+        if (!fs.length) continue;
+        const items = fs.map((f: any) => {
+          const c = getCatalogItem(f.catalogId);
+          return { id: f.id, width: f.width ?? c?.width ?? 100, depth: f.depth ?? c?.depth ?? 80 };
+        });
+        const res = arrangeRoom(room, floor.walls, floor.doors, items, {});
+        for (const r of res) {
+          if (r.position) { setFurnitureRotation(r.id, r.rotation); moveFurniture(r.id, r.position); moved++; }
+          else failed++;
+        }
+      }
+      commitFurnitureMove();
+      arrangeMsg = `✓ 排好 ${moved} 件${failed ? `，${failed} 件冇位` : ''}`;
+    } finally {
+      arranging = false;
+    }
+  }
+
+  // ── Fit-check a NEW item (feature A) ──
+  let fitCatalogId = $state('sofa');
+  let fitW = $state<number | ''>('');
+  let fitD = $state<number | ''>('');
+  let fitMsg = $state('');
+  let fitOk = $state(false);
+  function onFitCheck() {
+    const floor = bpFloor;
+    if (!floor) return;
+    const cat = getCatalogItem(fitCatalogId);
+    const width = Number(fitW) || cat?.width || 100;
+    const depth = Number(fitD) || cat?.depth || 80;
+    const rooms = (bpRooms.length ? bpRooms : floor.rooms) ?? [];
+    if (!rooms.length) { fitOk = false; fitMsg = '未偵測到房間 — 先 import scan'; return; }
+    // Existing furniture stays fixed (real furniture you're not moving).
+    const others = floor.furniture.map((f: any) => {
+      const c = getCatalogItem(f.catalogId);
+      return { position: f.position, rotation: f.rotation ?? 0, width: f.width ?? c?.width ?? 100, depth: f.depth ?? c?.depth ?? 80 };
+    });
+    let best: any = null, bestRoom: any = null;
+    for (const room of rooms) {
+      const r = recommendPlacementForRoom(room, floor.walls, floor.doors, others, { width, depth }, { strategy: 'wall' });
+      if (r && (!best || r.score > best.score)) { best = r; bestRoom = room; }
+    }
+    if (!best) { fitOk = false; fitMsg = `✗ 擺唔落 — 間屋冇位放 ${width}×${depth}cm`; return; }
+    const id = addFurniture(fitCatalogId, best.position);
+    setFurnitureRotation(id, best.rotation);
+    if (Number(fitW) || Number(fitD)) updateFurniture(id, { width, depth });
+    fitOk = true;
+    fitMsg = `✓ 擺得落！放咗喺 ${bestRoom.name ?? '間房'}`;
+  }
   let importFileName = $state('');
   let importJsonData: any = $state(null);
   let optStraighten = $state(true);
@@ -453,6 +542,40 @@
             <div class="text-xs text-gray-400">iOS LiDAR scan (.json/.zip)</div>
           </div>
         </button>
+
+        <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2 mt-3">Layout</h3>
+        <button
+          class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors border border-blue-200 hover:bg-blue-50 text-blue-700 disabled:opacity-50"
+          onclick={onAutoArrange}
+          disabled={arranging}
+          title="間房所有傢俬自動貼牆排好、唔重疊"
+        >
+          <div class="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center text-lg">✨</div>
+          <div class="text-left">
+            <div class="font-medium">Auto-arrange / 一鍵執靚</div>
+            <div class="text-xs text-blue-400">{arrangeMsg || '間房傢俬貼牆排好、唔重疊'}</div>
+          </div>
+        </button>
+
+        <div class="mt-3 p-3 rounded-lg border border-purple-200 bg-purple-50/40">
+          <div class="text-xs font-semibold text-purple-700 mb-2">🛒 試位 Fit-check — 買之前試吓擺唔擺得落</div>
+          <select bind:value={fitCatalogId} class="w-full px-2 py-1.5 border border-gray-200 rounded text-sm mb-2 bg-white">
+            {#each furnitureCatalog as f}
+              <option value={f.id}>{f.icon} {f.name} · {f.width}×{f.depth}cm</option>
+            {/each}
+          </select>
+          <div class="flex gap-2 mb-2">
+            <input type="number" bind:value={fitW} min="1" placeholder="闊 cm (可留空)" class="w-1/2 px-2 py-1.5 border border-gray-200 rounded text-sm" />
+            <input type="number" bind:value={fitD} min="1" placeholder="深 cm (可留空)" class="w-1/2 px-2 py-1.5 border border-gray-200 rounded text-sm" />
+          </div>
+          <button
+            onclick={onFitCheck}
+            class="w-full px-3 py-2 rounded-lg text-sm font-medium bg-purple-600 hover:bg-purple-700 text-white transition-colors"
+          >✨ 試位 / Find a spot</button>
+          {#if fitMsg}
+            <p class="text-xs mt-2 {fitOk ? 'text-green-600' : 'text-red-500'}">{fitMsg}</p>
+          {/if}
+        </div>
 
         <button
           class="w-full flex items-center justify-between px-1 py-2 mt-3"

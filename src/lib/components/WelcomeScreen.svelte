@@ -3,6 +3,7 @@
   import { localStore } from '$lib/services/datastore';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import { houseTemplates } from '$lib/utils/houseTemplates';
+  import { importRoomPlan } from '$lib/utils/roomplanImport';
 
   let { onDismiss }: { onDismiss: () => void } = $props();
 
@@ -56,11 +57,23 @@
       const data = JSON.parse(text);
       // If it looks like a project, load it
       if (data.id && data.floors) {
+        // App's own saved project
         data.updatedAt = new Date();
         currentProject.set(data);
         await localStore.save(data);
         markSeen();
         goto(`/editor?id=${data.id}`);
+      } else if (Array.isArray(data.walls) && data.walls[0]?.dimensions) {
+        // Apple RoomPlan CapturedRoom JSON — import as a new project
+        const floor = importRoomPlan(data, { straighten: true, orthogonal: true, mergeDistance: 15 });
+        const p = createDefaultProject(file.name.replace(/\.(json|zip)$/i, '') || 'Imported Scan');
+        floor.level = p.floors[0].level;
+        p.floors = [floor];
+        p.activeFloorId = floor.id;
+        currentProject.set(p);
+        await localStore.save(p);
+        markSeen();
+        goto(`/editor?id=${p.id}`);
       } else {
         alert('Unrecognized file format');
       }

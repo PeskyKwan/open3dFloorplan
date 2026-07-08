@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, moveFurniture, commitFurnitureMove, setFurnitureRotation } from '$lib/stores/project';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
+  import { recommendPlacementForRoom } from '$lib/utils/placementRecommender';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
 
@@ -26,6 +27,48 @@
   }
   function unitLabel(): string {
     return settings.units === 'imperial' ? 'in' : 'cm';
+  }
+
+  // ── Auto furniture placement ("where does it fit best?") ──
+  let placeMsg = $state('');
+  let placing = $state(false);
+  function autoPlaceSelected() {
+    const fsel = selectedFurniture;
+    if (!floor || !fsel) return;
+    placing = true;
+    placeMsg = '';
+    try {
+      const cat = getCatalogItem(fsel.catalogId);
+      const item = {
+        width: fsel.width ?? cat?.width ?? 100,
+        depth: fsel.depth ?? cat?.depth ?? 80,
+      };
+      const others = floor.furniture
+        .filter((f) => f.id !== fsel.id)
+        .map((f) => {
+          const c = getCatalogItem(f.catalogId);
+          return {
+            position: f.position,
+            rotation: f.rotation ?? 0,
+            width: f.width ?? c?.width ?? 100,
+            depth: f.depth ?? c?.depth ?? 80,
+          };
+        });
+      const rooms = (detectedRooms.length ? detectedRooms : floor.rooms) ?? [];
+      if (!rooms.length) { placeMsg = '未偵測到房間 — 要有封閉的牆先計到'; return; }
+      let best: ReturnType<typeof recommendPlacementForRoom> = null;
+      for (const room of rooms) {
+        const r = recommendPlacementForRoom(room, floor.walls, floor.doors, others, item, { strategy: 'wall' });
+        if (r && (!best || r.score > best.score)) best = r;
+      }
+      if (!best) { placeMsg = '搵唔到合適空位 — 間房太逼或者件傢俬太大'; return; }
+      setFurnitureRotation(fsel.id, best.rotation);
+      moveFurniture(fsel.id, best.position);
+      commitFurnitureMove();
+      placeMsg = best.againstWall ? '✓ 擺咗喺最佳貼牆位' : '✓ 擺咗喺最佳空位';
+    } finally {
+      placing = false;
+    }
   }
 
   let { is3D = false }: { is3D?: boolean } = $props();
@@ -539,6 +582,17 @@
       >{selectedFurniture.locked ? '🔒 Locked' : '🔓'}</button>
     </h3>
     <div class="space-y-3">
+      <!-- Auto placement -->
+      <button
+        onclick={autoPlaceSelected}
+        disabled={placing}
+        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+        title="根據間房同其他傢俬，自動搵最佳擺位"
+      >✨ Auto-place / 自動擺位</button>
+      {#if placeMsg}
+        <p class="text-xs text-gray-500 -mt-1">{placeMsg}</p>
+      {/if}
+
       <!-- Color -->
       <div>
         <div class="flex items-center gap-1 mb-2">

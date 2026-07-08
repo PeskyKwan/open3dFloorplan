@@ -230,6 +230,7 @@ export function detectRooms(walls: Wall[]): Room[] {
         walls: uniqueWalls,
         floorTexture: 'hardwood',
         area: Math.round(area / 10000 * 100) / 100, // cm² to m²
+        polygon: poly.map(p => ({ x: p.x, y: p.y })), // keep the reliable ordered boundary
       });
     }
   }
@@ -250,6 +251,9 @@ function shoelace(pts: Point[]): number {
  * Get polygon vertices for a room from its walls
  */
 export function getRoomPolygon(room: Room, walls: Wall[]): Point[] {
+  // Prefer the ordered boundary captured during detection — it's reliable even
+  // when walls share endpoints / T-junctions that the fallback tracer can't order.
+  if (room.polygon && room.polygon.length >= 3) return room.polygon;
   const roomWalls = walls.filter(w => room.walls.includes(w.id));
   if (roomWalls.length < 3) return [];
 
