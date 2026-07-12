@@ -66,6 +66,7 @@
   let customEntourageDefs: CustomEntourageDef[] | undefined = $state(undefined);
   let dragOffset: Point = { x: 0, y: 0 };
   let dragStartRotation: number = 0;
+  let dragStartFurniturePos: Point | null = null;
   let dragWasWallSnapped: boolean = false;
   let draggingDoorId: string | null = $state(null);
   let draggingWindowId: string | null = $state(null);
@@ -2416,6 +2417,7 @@
           commitFurnitureMove(); // snapshot before drag for undo
           dragOffset = { x: wp.x - fi.position.x, y: wp.y - fi.position.y };
           dragStartRotation = fi.rotation;
+          dragStartFurniturePos = { x: fi.position.x, y: fi.position.y };
           dragWasWallSnapped = false;
         }
         return;
@@ -2957,6 +2959,7 @@
     // correct undo point. Do NOT snapshot again here — a second (post-move) snapshot made the
     // first Undo tap a no-op. Instead, drop the snapshot if the interaction changed nothing
     // (e.g. a plain tap/select), so Undo isn't polluted with empty steps.
+    if (draggingFurnitureId) resolveFurnitureWallOverlap(draggingFurnitureId);
     discardTopUndoIfUnchanged();
     draggingTextAnnotationId = null;
     draggingRoomId = null;
@@ -2977,6 +2980,83 @@
     wallSnapInfo = null;
     if (measuring && measureStart && measureEnd) {
       // Keep measurement visible until next click
+    }
+  }
+
+  // ── furniture ↔ wall overlap (SAT on convex quads) ──────────────
+  function furnitureQuad(pos: Point, rotation: number, w: number, d: number): Point[] {
+    const a = (rotation * Math.PI) / 180, c = Math.cos(a), sn = Math.sin(a);
+    const hw = w / 2, hd = d / 2;
+    return [{ x: -hw, y: -hd }, { x: hw, y: -hd }, { x: hw, y: hd }, { x: -hw, y: hd }]
+      .map((p) => ({ x: pos.x + p.x * c - p.y * sn, y: pos.y + p.x * sn + p.y * c }));
+  }
+  function wallQuad(w: { start: Point; end: Point; thickness?: number }): Point[] {
+    const dx = w.end.x - w.start.x, dy = w.end.y - w.start.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const ht = (w.thickness ?? 15) / 2;
+    const nx = (-dy / len) * ht, ny = (dx / len) * ht;
+    return [
+      { x: w.start.x + nx, y: w.start.y + ny }, { x: w.end.x + nx, y: w.end.y + ny },
+      { x: w.end.x - nx, y: w.end.y - ny }, { x: w.start.x - nx, y: w.start.y - ny },
+    ];
+  }
+  /** Minimum translation vector to push quad A out of quad B, or null when not overlapping.
+   *  1cm tolerance so flush-against-wall never counts as a collision. */
+  function quadMTV(A: Point[], B: Point[]): Point | null {
+    const TOL = 1;
+    let minOverlap = Infinity, mtv: Point | null = null;
+    for (const poly of [A, B]) {
+      for (let i = 0; i < poly.length; i++) {
+        const p1 = poly[i], p2 = poly[(i + 1) % poly.length];
+        const len = Math.hypot(p2.y - p1.y, p2.x - p1.x) || 1;
+        const ax = -(p2.y - p1.y) / len, ay = (p2.x - p1.x) / len;
+        let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+        for (const p of A) { const v = p.x * ax + p.y * ay; minA = Math.min(minA, v); maxA = Math.max(maxA, v); }
+        for (const p of B) { const v = p.x * ax + p.y * ay; minB = Math.min(minB, v); maxB = Math.max(maxB, v); }
+        const overlap = Math.min(maxA, maxB) - Math.max(minA, minB);
+        if (overlap <= TOL) return null;
+        if (overlap < minOverlap) {
+          minOverlap = overlap;
+          const caA = (minA + maxA) / 2, caB = (minB + maxB) / 2;
+          const sign = caA < caB ? -1 : 1;
+          mtv = { x: ax * sign * overlap, y: ay * sign * overlap };
+        }
+      }
+    }
+    return mtv;
+  }
+  /** On release: if the piece was dropped overlapping a wall, push it out to the
+   *  nearest free spot (or revert to where the drag started if it's stuck deep). */
+  function resolveFurnitureWallOverlap(id: string, revertIfStuck = true) {
+    const fl = currentFloor;
+    if (!fl) return;
+    const fi = fl.furniture.find((f) => f.id === id);
+    if (!fi) return;
+    const cat = getCatalogItem(fi.catalogId);
+    const w = fi.width ?? cat?.width ?? 100, d = fi.depth ?? cat?.depth ?? 80;
+    let pos = { ...fi.position };
+    for (let iter = 0; iter < 10; iter++) {
+      // Sum the push-out vectors of EVERY overlapping wall — converges in corners
+      // where pushing out of one wall shoves the piece into the other.
+      const quad = furnitureQuad(pos, fi.rotation ?? 0, w, d);
+      let px = 0, py = 0, hits = 0;
+      for (const wall of fl.walls) {
+        const mtv = quadMTV(quad, wallQuad(wall));
+        if (mtv) { px += mtv.x; py += mtv.y; hits++; }
+      }
+      if (!hits) {
+        if (pos.x !== fi.position.x || pos.y !== fi.position.y) {
+          moveFurniture(id, { x: Math.round(pos.x), y: Math.round(pos.y) });
+        }
+        return;
+      }
+      if (Math.abs(px) < 0.01 && Math.abs(py) < 0.01) break; // opposing walls cancel out
+      pos = { x: pos.x + px, y: pos.y + py };
+    }
+    // Still stuck (dropped deep inside / between walls).
+    if (revertIfStuck && dragStartFurniturePos) {
+      moveFurniture(id, dragStartFurniturePos);
+      setFurnitureRotation(id, dragStartRotation);
     }
   }
 
@@ -3027,7 +3107,12 @@
   // Listeners are registered manually in onMount with { passive: false }
   // because we must preventDefault to stop scrolling and the browser's
   // compatibility mouse events (which would double-fire the handlers).
-  let pinchState: { dist: number; cx: number; cy: number } | null = null;
+  let pinchState: { dist: number; cx: number; cy: number; angle: number } | null = null;
+  // Two-finger TWIST on a selected furniture piece rotates it (free angle, with
+  // magnetic snap at 0/45/90/… so it's easy to get things perfectly straight).
+  let twistTargetId: string | null = null;
+  let twistStartRotation = 0;
+  let twistEngaged = false;
   let singleTouchActive = false;
   let lastTapTime = 0;
   let lastTapX = 0;
@@ -3060,7 +3145,18 @@
         dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY),
         cx: (a.clientX + b.clientX) / 2,
         cy: (a.clientY + b.clientY) / 2,
+        angle: Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI,
       };
+      // A furniture piece is selected → the twist component of this gesture rotates it
+      twistTargetId = null; twistEngaged = false;
+      if (currentSelectedId && currentFloor?.furniture.some((f) => f.id === currentSelectedId && !f.locked)) {
+        const fi = currentFloor.furniture.find((f) => f.id === currentSelectedId)!;
+        twistTargetId = fi.id;
+        twistStartRotation = fi.rotation ?? 0;
+        dragStartFurniturePos = { x: fi.position.x, y: fi.position.y };
+        dragStartRotation = twistStartRotation;
+        commitFurnitureMove(); // undo snapshot before the rotation gesture
+      }
     }
   }
 
@@ -3083,7 +3179,22 @@
       // Two-finger pan: camera follows the midpoint
       camX -= (cx - pinchState.cx) / newZoom;
       camY -= (cy - pinchState.cy) / newZoom;
-      pinchState = { dist, cx, cy };
+      // Twist → rotate the selected furniture piece
+      const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
+      if (twistTargetId) {
+        let delta = angle - pinchState.angle;
+        while (delta > 180) delta -= 360;
+        while (delta < -180) delta += 360;
+        twistStartRotation += delta; // accumulate the raw twist
+        if (!twistEngaged && Math.abs(((twistStartRotation - dragStartRotation) % 360 + 360) % 360) > 4) twistEngaged = true;
+        if (twistEngaged) {
+          let rot = ((twistStartRotation % 360) + 360) % 360;
+          const nearest45 = Math.round(rot / 45) * 45;
+          if (Math.abs(rot - nearest45) <= 6) rot = nearest45 % 360; // magnetic straighten
+          setFurnitureRotation(twistTargetId, Math.round(rot));
+        }
+      }
+      pinchState = { dist, cx, cy, angle };
       markDirty();
     } else if (singleTouchActive && e.touches.length === 1) {
       dispatchMouse('mousemove', e.touches[0].clientX, e.touches[0].clientY);
@@ -3094,7 +3205,13 @@
     e.preventDefault();
     if (pinchState) {
       // Leaving pinch: ignore the remaining finger until it lifts too
-      if (e.touches.length < 2) pinchState = null;
+      if (e.touches.length < 2) {
+        pinchState = null;
+        if (twistTargetId) {
+          if (twistEngaged) resolveFurnitureWallOverlap(twistTargetId, false);
+          twistTargetId = null; twistEngaged = false;
+        }
+      }
       return;
     }
     if (singleTouchActive && e.touches.length === 0) {

@@ -88,7 +88,14 @@
   function setDepth(v: number) { if (selFurniture) updateFurniture(selFurniture.id, { depth: Math.max(10, Math.round(v)) }); }
   function nudgeW(d: number) { if (selFurniture) setWidth(fw(selFurniture) + d); }
   function nudgeD(d: number) { if (selFurniture) setDepth(fd(selFurniture) + d); }
-  function rotate90() { if (selFurniture) setFurnitureRotation(selFurniture.id, ((selFurniture.rotation ?? 0) + 90) % 360); }
+  /** Crooked (scanned) pieces straighten to the nearest 90° first; straight pieces turn +90°. */
+  function rotate90() {
+    if (!selFurniture) return;
+    const r = (((selFurniture.rotation ?? 0) % 360) + 360) % 360;
+    const nearest = ((Math.round(r / 90) * 90) % 360 + 360) % 360;
+    const isStraight = Math.abs(r - Math.round(r / 90) * 90) < 0.5;
+    setFurnitureRotation(selFurniture.id, isStraight ? (nearest + 90) % 360 : nearest);
+  }
   /** One tap: push the selected piece flush against the nearest wall, facing the room. */
   function snapSelToWall() {
     if (!selFurniture || !floor) return;
@@ -288,7 +295,7 @@
             </div>
           </div>
         </div>
-        <div class="text-[13px] text-slate-500 mt-2.5 text-center">拖傢俬移位 · 拖角改尺寸 · 或用 ± / 打數字</div>
+        <div class="text-[13px] text-slate-500 mt-2.5 text-center">拖傢俬移位 · 兩指扭轉方向 · ± / 打數字改尺寸</div>
       </div>
     {:else if mode === '2d' && selWall}
       <div class="absolute left-2 right-2 bottom-2 bg-[#141b23] rounded-2xl p-4">
