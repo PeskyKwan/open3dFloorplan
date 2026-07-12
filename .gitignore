@@ -21,3 +21,12 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Capacitor / iOS generated
+ios/App/build
+ios/App/Pods
+ios/App/App/public
+ios/App/App/capacitor.config.json
+ios/App/App/config.xml
+DerivedData
+xcuserdata

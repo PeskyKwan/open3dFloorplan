@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement } from '$lib/stores/project';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, cancelPlacement, discardTopUndoIfUnchanged, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, simpleMode } from '$lib/stores/project';
   import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
+  import { viewportKind } from '$lib/stores/viewport';
   import { handleGlobalShortcut } from '$lib/utils/shortcuts';
   import ContextMenu from './ContextMenu.svelte';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
@@ -115,6 +116,7 @@
   let showLayerPanel = $state(false);
   let showMinimap = $state(true);
   let minimapCanvas: HTMLCanvasElement;
+  let isPhoneView = $state(false); // dark canvas theme on phone
   const RULER_SIZE = 24;
 
   // Detected rooms
@@ -137,6 +139,7 @@
   let currentWindowType: Win['type'] = $state('standard');
   let currentSnapEnabled: boolean = $state(true);
   let currentSnapToGrid: boolean = $state(true);
+  let currentSimpleMode: boolean = $state(true);
   let currentGridSize: number = $state(25);
   let isPlacingStair: boolean = $state(false);
   let draggingStairId: string | null = $state(null);
@@ -148,6 +151,10 @@
   let isCalibrating: boolean = $state(false);
   let calPoints: Point[] = $state([]);
   let bgImage: HTMLImageElement | null = $state(null);
+
+  // Multi-touch pinch-zoom / two-finger pan (iPad / iPhone)
+  let activePointers = new Map<number, { x: number; y: number }>();
+  let gesture: { dist: number; midX: number; midY: number; zoom: number; camX: number; camY: number } | null = null;
 
   // Room label drag state
   let draggingRoomLabelId: string | null = $state(null);
@@ -170,6 +177,7 @@
   let handleDragStart: Point = { x: 0, y: 0 };
   let handleOrigScale: { x: number; y: number } = { x: 1, y: 1 };
   let handleOrigRotation: number = 0;
+  let handleOrigDims: { w: number; d: number } = { w: 100, d: 80 };
 
   // Wall parallel drag state (drag midpoint to move wall parallel)
   let draggingWallParallel: { wallId: string; startMousePos: Point; origStart: Point; origEnd: Point; origCurve?: Point; connectedStart: { wallId: string; endpoint: 'start' | 'end' }[]; connectedEnd: { wallId: string; endpoint: 'start' | 'end' }[] } | null = $state(null);
@@ -303,6 +311,13 @@
     return Math.round(v / step) * step;
   }
 
+  /** Fine snap for furniture dragging: 1cm steps so pieces move smoothly.
+   *  The coarse grid (25cm) made furniture jump a whole cell and land in walls. */
+  function snapFurniturePos(v: number): number {
+    if (!currentSnapEnabled) return v;
+    return Math.round(v); // 1cm
+  }
+
   function screenToWorld(sx: number, sy: number): Point {
     return { x: (sx - width / 2) / zoom + camX, y: (sy - height / 2) / zoom + camY };
   }
@@ -403,7 +418,7 @@
     if (step < 4) return;
 
     // Minor grid
-    ctx.strokeStyle = '#e8eaed';
+    ctx.strokeStyle = isPhoneView ? '#1b2530' : '#e8eaed';
     ctx.lineWidth = 0.5;
     const offX = (width / 2 - camX * zoom) % step;
     const offY = (height / 2 - camY * zoom) % step;
@@ -417,7 +432,7 @@
     // Major grid (every 100cm / 1m)
     const majorStep = 100 * zoom;
     if (majorStep >= 20) {
-      ctx.strokeStyle = '#d1d5db';
+      ctx.strokeStyle = isPhoneView ? '#243040' : '#d1d5db';
       ctx.lineWidth = 0.8;
       const mOffX = (width / 2 - camX * zoom) % majorStep;
       const mOffY = (height / 2 - camY * zoom) % majorStep;
@@ -1084,7 +1099,8 @@
     if (!canvasDirty) { requestAnimationFrame(draw); return; }
     canvasDirty = false;
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = '#f8f9fa';
+    // Dark canvas on phone so the plan blends with the Tesla-style dark chrome (not a bright white slab).
+    ctx.fillStyle = isPhoneView ? '#0d1218' : '#f8f9fa';
     ctx.fillRect(0, 0, width, height);
     drawGrid();
     if (layerVis.guides) drawGuides();
@@ -1755,6 +1771,8 @@
     const unsub9 = placingWindowType.subscribe((t) => { currentWindowType = t; markDirty(); });
     const unsub10 = snapEnabled.subscribe((v) => { currentSnapEnabled = v; markDirty(); });
     const unsub_snapgrid = projectSettings.subscribe((s) => { currentSnapToGrid = s.snapToGrid; currentGridSize = s.gridSize; markDirty(); });
+    const unsub_simple = simpleMode.subscribe((v) => { currentSimpleMode = v; markDirty(); });
+    const unsub_vpk = viewportKind.subscribe((v) => { isPhoneView = v === 'phone'; markDirty(); });
     const unsub11 = placingStair.subscribe((v) => { isPlacingStair = v; markDirty(); });
     const unsub_layers = layerVisibility.subscribe((v) => { layerVis = v; markDirty(); });
     const unsub_col = placingColumn.subscribe((v) => { isPlacingColumn = v; markDirty(); });
@@ -1798,7 +1816,7 @@
     }
     document.addEventListener('paste', handlePaste);
 
-    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); document.removeEventListener('paste', handlePaste); };
+    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsub_simple(); unsub_vpk(); document.removeEventListener('paste', handlePaste); };
   });
 
   /** Compute world bounding box of all elements */
@@ -1978,6 +1996,23 @@
 
   function onMouseDown(e: MouseEvent) {
     markDirty();
+    // Pointer capture: keep receiving move/up even if the finger/mouse leaves the canvas mid-drag.
+    // Also lets touch (iPad/iPhone) drive the same handlers as the mouse.
+    try { (e.currentTarget as Element)?.setPointerCapture?.((e as PointerEvent).pointerId); } catch {}
+    // Track pointers for multi-touch. Two fingers = pinch-zoom / pan gesture.
+    const _pid = (e as PointerEvent).pointerId;
+    if (_pid != null) {
+      activePointers.set(_pid, { x: e.clientX, y: e.clientY });
+      if (activePointers.size >= 2) {
+        // Starting a gesture — cancel any single-finger drag so nothing jumps.
+        draggingFurnitureId = null; draggingHandle = null; isPanning = false;
+        marqueeStart = null; marqueeEnd = null;
+        const pts = [...activePointers.values()];
+        const gdx = pts[0].x - pts[1].x, gdy = pts[0].y - pts[1].y;
+        gesture = { dist: Math.hypot(gdx, gdy) || 1, midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2, zoom, camX, camY };
+        return;
+      }
+    }
     if (e.button === 1 || (e.button === 0 && (spaceDown || $panMode || (e.shiftKey && currentTool === 'select')))) {
       isPanning = true;
       panStartX = e.clientX;
@@ -2206,8 +2241,10 @@
           return;
         }
       }
-      // Check wall endpoint handles first (drag-to-resize walls)
-      if (currentSelectedId && currentFloor) {
+      // Check wall endpoint handles first (drag-to-resize walls).
+      // Simple mode (default + mobile) LOCKS walls from dragging so scanned walls
+      // can't be moved by an accidental tap. Turn off Simple mode to edit walls.
+      if (currentSelectedId && currentFloor && !currentSimpleMode) {
         const selWall = currentFloor.walls.find(w => w.id === currentSelectedId);
         if (selWall) {
           const epThreshold = 15 / zoom;
@@ -2259,6 +2296,8 @@
           handleDragStart = { ...wp };
           handleOrigScale = { x: fi.scale?.x ?? 1, y: fi.scale?.y ?? 1 };
           handleOrigRotation = fi.rotation;
+          const _c = getCatalogItem(fi.catalogId);
+          handleOrigDims = { w: fi.width ?? _c?.width ?? 100, d: fi.depth ?? _c?.depth ?? 80 };
           commitFurnitureMove(); // snapshot for undo
           return;
         }
@@ -2356,13 +2395,17 @@
           selectedRoomId.set(room.id);
           selectedElementId.set(null);
           selectedElementIds.set(new Set());
-          // Start room drag
-          draggingRoomId = room.id;
-          roomDragStartMouse = { x: wp.x, y: wp.y };
-          roomDragStartPositions.clear();
-          for (const wid of room.walls) {
-            const w = currentFloor!.walls.find(wall => wall.id === wid);
-            if (w) roomDragStartPositions.set(wid, { start: { ...w.start }, end: { ...w.end } });
+          // Start room drag (moves all the room's walls). Locked in Simple mode so a tap
+          // on the floor can't drag the whole room. Snapshot pre-drag for undo.
+          if (!currentSimpleMode) {
+            commitFurnitureMove();
+            draggingRoomId = room.id;
+            roomDragStartMouse = { x: wp.x, y: wp.y };
+            roomDragStartPositions.clear();
+            for (const wid of room.walls) {
+              const w = currentFloor!.walls.find(wall => wall.id === wid);
+              if (w) roomDragStartPositions.set(wid, { start: { ...w.start }, end: { ...w.end } });
+            }
           }
         } else {
           // Empty space — start marquee selection
@@ -2471,6 +2514,28 @@
   function onMouseMove(e: MouseEvent) {
     markDirty();
     const rect = canvas.getBoundingClientRect();
+
+    // Multi-touch pinch-zoom / two-finger pan
+    const _pid = (e as PointerEvent).pointerId;
+    if (_pid != null && activePointers.has(_pid)) activePointers.set(_pid, { x: e.clientX, y: e.clientY });
+    if (gesture && activePointers.size >= 2) {
+      const pts = [...activePointers.values()];
+      const gdx = pts[0].x - pts[1].x, gdy = pts[0].y - pts[1].y;
+      const nd = Math.hypot(gdx, gdy) || 1;
+      const nmx = (pts[0].x + pts[1].x) / 2, nmy = (pts[0].y + pts[1].y) / 2;
+      const startLocalX = gesture.midX - rect.left, startLocalY = gesture.midY - rect.top;
+      const curLocalX = nmx - rect.left, curLocalY = nmy - rect.top;
+      const newZoom = Math.max(0.1, Math.min(10, gesture.zoom * (nd / gesture.dist)));
+      const worldX = (startLocalX - width / 2) / gesture.zoom + gesture.camX;
+      const worldY = (startLocalY - height / 2) / gesture.zoom + gesture.camY;
+      camX = worldX - (curLocalX - width / 2) / newZoom;
+      camY = worldY - (curLocalY - height / 2) / newZoom;
+      zoom = newZoom;
+      canvasZoom.set(zoom); canvasCamX.set(camX); canvasCamY.set(camY);
+      markDirty();
+      return;
+    }
+
     mousePos = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 
     // Drag room label
@@ -2606,37 +2671,33 @@
             }
             setFurnitureRotation(currentSelectedId, ((angle % 360) + 360) % 360);
           } else {
-            // Resize: compute delta in furniture-local coords
+            // Resize: write ABSOLUTE width/depth in cm (same representation the Properties
+            // panel uses), so drag-resize and the panel stay in sync and handles stay clickable.
             const dx = mousePos.x - fi.position.x;
             const dy = mousePos.y - fi.position.y;
             const ang = -(fi.rotation * Math.PI) / 180;
             const localX = dx * Math.cos(ang) - dy * Math.sin(ang);
             const localY = dx * Math.sin(ang) + dy * Math.cos(ang);
-            const minScale = 10 / Math.max(cat.width, cat.depth); // 10cm minimum
-            let newSx = fi.scale?.x ?? 1;
-            let newSy = fi.scale?.y ?? 1;
+            const absSx = Math.abs(fi.scale?.x ?? 1) || 1;
+            const absSy = Math.abs(fi.scale?.y ?? 1) || 1;
+            const baseW = fi.width ?? cat.width;
+            const baseD = fi.depth ?? cat.depth;
+            let newW = baseW;
+            let newD = baseD;
             const isEdge = ['resize-t', 'resize-b', 'resize-l', 'resize-r'].includes(draggingHandle);
             const resizesX = !isEdge || draggingHandle === 'resize-l' || draggingHandle === 'resize-r';
             const resizesY = !isEdge || draggingHandle === 'resize-t' || draggingHandle === 'resize-b';
-            if (resizesX) {
-              newSx = Math.abs(localX * 2) / cat.width;
-              newSx = Math.max(minScale, Math.round(newSx * 20) / 20);
-            }
-            if (resizesY) {
-              newSy = Math.abs(localY * 2) / cat.depth;
-              newSy = Math.max(minScale, Math.round(newSy * 20) / 20);
-            }
-            // Shift: maintain aspect ratio
+            // Effective half-size dragged to = |local|; divide out scale sign-magnitude to get stored dim.
+            if (resizesX) newW = Math.max(10, Math.round((Math.abs(localX) * 2) / absSx));
+            if (resizesY) newD = Math.max(10, Math.round((Math.abs(localY) * 2) / absSy));
+            // Shift: maintain aspect ratio (corner handles only), locked to pre-drag ratio
             if (shiftDown && resizesX && resizesY) {
-              const origRatio = (handleOrigScale.x * cat.width) / (handleOrigScale.y * cat.depth);
-              const currentRatio = (newSx * cat.width) / (newSy * cat.depth);
-              if (currentRatio > origRatio) {
-                newSy = (newSx * cat.width) / (origRatio * cat.depth);
-              } else {
-                newSx = (newSy * cat.depth * origRatio) / cat.width;
-              }
+              const origRatio = handleOrigDims.w / handleOrigDims.d;
+              const curRatio = newW / newD;
+              if (curRatio > origRatio) newD = Math.round(newW / origRatio);
+              else newW = Math.round(newD * origRatio);
             }
-            scaleFurniture(currentSelectedId, { x: newSx, y: newSy });
+            resizeFurniture(currentSelectedId, { width: newW, depth: newD });
           }
         }
       }
@@ -2662,14 +2723,16 @@
       const basePos = { x: mousePos.x - dragOffset.x, y: mousePos.y - dragOffset.y };
       const fi = currentFloor?.furniture.find(f => f.id === draggingFurnitureId);
       if (fi) {
-        const wallSnap = snapFurnitureToWall(basePos, fi.catalogId, fi.rotation);
+        // Simple mode: NO auto wall-snap/auto-rotate — furniture moves freely (1cm) so it never
+        // suddenly flips when you drag near a wall. Wall-snapping only in Advanced mode.
+        const wallSnap = currentSimpleMode ? null : snapFurnitureToWall(basePos, fi.catalogId, fi.rotation);
         if (wallSnap) {
           moveFurniture(draggingFurnitureId, wallSnap.position);
           setFurnitureRotation(draggingFurnitureId, wallSnap.rotation);
           dragWasWallSnapped = true;
           wallSnapInfo = { wallId: wallSnap.wallId, side: wallSnap.side, wallAngle: wallSnap.wallAngle };
         } else {
-          const snapped = { x: snap(basePos.x), y: snap(basePos.y) };
+          const snapped = { x: snapFurniturePos(basePos.x), y: snapFurniturePos(basePos.y) };
           // Snap to guide lines
           const GUIDE_SNAP = 10; // world units
           if (currentFloor?.guides) {
@@ -2736,6 +2799,10 @@
 
   function onMouseUp(e: MouseEvent) {
     markDirty();
+    // Release multi-touch pointer; end gesture when fewer than 2 fingers remain.
+    const _pid = (e as PointerEvent).pointerId;
+    if (_pid != null) activePointers.delete(_pid);
+    if (gesture) { if (activePointers.size < 2) gesture = null; return; }
     isPanning = false;
     draggingGuideId = null;
 
@@ -2815,16 +2882,11 @@
       marqueeEnd = null;
     }
 
-    if (draggingFurnitureId) commitFurnitureMove();
-    if (draggingHandle) commitFurnitureMove();
-    if (draggingWallEndpoint) commitFurnitureMove();
-    if (draggingWallParallel) commitFurnitureMove();
-    if (draggingCurveHandle) commitFurnitureMove();
-    if (draggingMultiSelect) commitFurnitureMove();
-    if (draggingRoomId) commitFurnitureMove();
-    if (draggingStairId) commitFurnitureMove();
-    if (draggingColumnId) commitFurnitureMove();
-    if (draggingTextAnnotationId) commitFurnitureMove();
+    // NOTE: the pre-move snapshot is already taken at mousedown (drag start), which is the
+    // correct undo point. Do NOT snapshot again here — a second (post-move) snapshot made the
+    // first Undo tap a no-op. Instead, drop the snapshot if the interaction changed nothing
+    // (e.g. a plain tap/select), so Undo isn't polluted with empty steps.
+    discardTopUndoIfUnchanged();
     draggingTextAnnotationId = null;
     draggingRoomId = null;
     roomDragStartPositions.clear();
@@ -2926,8 +2988,9 @@
     // Canvas-specific Escape handling (before global shortcut eats it)
     if (e.code === 'Escape') {
       wallStart = null; wallSequenceFirst = null;
-      placingFurnitureId.set(null);
-      placingRotation.set(0);
+      // Central cancel: clears placingFurniture/Stair/Column + resets tool to select
+      // so the user can never get trapped in a placement mode.
+      cancelPlacement();
       editingTextAnnotationId = null;
       textAnnotationMode = false;
       measuring = false;
@@ -2937,6 +3000,7 @@
       annotationStart = null;
       marqueeStart = null;
       marqueeEnd = null;
+      e.preventDefault();
     }
 
     // Select All (Ctrl+A / Cmd+A)
@@ -3452,10 +3516,11 @@
     class="block w-full h-full"
     tabindex="0"
     aria-label="Floor plan editor canvas"
-    style="cursor: {cursorStyle}"
-    onmousedown={onMouseDown}
-    onmousemove={onMouseMove}
-    onmouseup={onMouseUp}
+    style="cursor: {cursorStyle}; touch-action: none;"
+    onpointerdown={onMouseDown}
+    onpointermove={onMouseMove}
+    onpointerup={onMouseUp}
+    onpointercancel={onMouseUp}
     ondblclick={onDblClick}
     onwheel={onWheel}
     oncontextmenu={onContextMenu}
@@ -3547,8 +3612,8 @@
       </div>
     </div>
   {/if}
-  <!-- Mini-map -->
-  {#if showMinimap && currentFloor && currentFloor.walls.length > 0}
+  <!-- Mini-map (desktop/tablet only — mobile has its own chrome) -->
+  {#if showMinimap && currentFloor && currentFloor.walls.length > 0 && $viewportKind !== 'phone'}
     <canvas
       bind:this={minimapCanvas}
       width="180"
@@ -3558,6 +3623,7 @@
       onclick={onMinimapClick}
     ></canvas>
   {/if}
+  {#if $viewportKind !== 'phone'}
   <div class="absolute bottom-2 right-2 bg-white/80 rounded px-2 py-1 text-xs text-gray-500 flex gap-3">
     {#if detectedRooms.length > 0}
       <span>{detectedRooms.length} room{detectedRooms.length !== 1 ? 's' : ''}</span>
@@ -3602,8 +3668,9 @@
       {showMinimap ? '🗺' : '🗺'} Map
     </button>
   </div>
+  {/if}
   <!-- Layer Visibility Panel -->
-  {#if showLayerPanel}
+  {#if showLayerPanel && $viewportKind !== 'phone'}
     <div class="absolute bottom-12 right-2 z-20 bg-white rounded-lg shadow-lg border border-gray-200 p-3 text-xs min-w-[160px]">
       <div class="font-semibold text-gray-700 mb-2">Layers</div>
       {#each [['walls','Walls'],['doors','Doors'],['windows','Windows'],['furniture','Furniture'],['stairs','Stairs'],['columns','Columns'],['guides','Guides'],['measurements','Measurements']] as [key, label]}
@@ -3624,8 +3691,8 @@
     </div>
   {/if}
 
-  <!-- Contextual Toolbar -->
-  {#if (currentSelectedId || currentSelectedIds.size > 0) && currentFloor && currentTool === 'select'}
+  <!-- Contextual Toolbar (desktop/tablet only — mobile uses its own size panel) -->
+  {#if (currentSelectedId || currentSelectedIds.size > 0) && currentFloor && currentTool === 'select' && $viewportKind !== 'phone'}
     {@const el = (() => {
       const f = currentFloor;
       const wall = f.walls.find(w => w.id === currentSelectedId);

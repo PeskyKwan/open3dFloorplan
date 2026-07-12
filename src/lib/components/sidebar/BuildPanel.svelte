@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedTool, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY } from '$lib/stores/project';
+  import { selectedTool, placingFurnitureId, placingDoorType, placingWindowType, placingStair, addStair, placingColumn, placingColumnShape, activeFloor, setBackgroundImage, canvasCamX, canvasCamY, simpleMode } from '$lib/stores/project';
   import type { Tool } from '$lib/stores/project';
   import type { Door, Window as Win } from '$lib/models/types';
   import { roomPresets, placePreset } from '$lib/utils/roomPresets';
@@ -126,6 +126,9 @@
   function setTool(tool: Tool) {
     selectedTool.set(tool);
     placingFurnitureId.set(null);
+    // Clicking any tool (incl. Select) must cancel stair/column placement so the user can't get stuck.
+    placingStair.set(false);
+    placingColumn.set(false);
   }
 
   let currentTool = $state<Tool>('select');
@@ -400,10 +403,12 @@
       class="flex-1 py-2.5 text-xs font-semibold uppercase tracking-wide {activeTab === 'draw' ? 'text-slate-800 border-b-2 border-blue-500 bg-blue-50' : 'text-gray-500 hover:text-gray-700'}"
       onclick={() => activeTab = 'draw'}
     >Build</button>
+    {#if !$simpleMode}
     <button
       class="flex-1 py-2.5 text-xs font-semibold uppercase tracking-wide {activeTab === 'rooms' ? 'text-slate-800 border-b-2 border-blue-500 bg-blue-50' : 'text-gray-500 hover:text-gray-700'}"
       onclick={() => activeTab = 'rooms'}
     >Rooms</button>
+    {/if}
     <button
       class="flex-1 py-2.5 text-xs font-semibold uppercase tracking-wide {activeTab === 'objects' ? 'text-slate-800 border-b-2 border-blue-500 bg-blue-50' : 'text-gray-500 hover:text-gray-700'}"
       onclick={() => activeTab = 'objects'}
@@ -453,6 +458,7 @@
           </div>
         </button>
 
+        {#if !$simpleMode}
         <div class="flex gap-2">
           <button
             class="flex-1 flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors {isPlacingColumn ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
@@ -477,7 +483,9 @@
             </div>
           </button>
         </div>
+        {/if}
 
+        {#if !$simpleMode}
         <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2 mt-3">Annotate</h3>
         <button
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors {currentTool === 'text' ? 'bg-blue-50 text-slate-800 ring-1 ring-blue-200' : 'hover:bg-gray-50 text-gray-700'}"
@@ -516,8 +524,10 @@
             <div class="text-xs text-gray-400">Measure distances (M)</div>
           </div>
         </button>
+        {/if}
 
         <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2 mt-3">Import</h3>
+        {#if !$simpleMode}
         <button
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors hover:bg-gray-50 text-gray-700"
           onclick={onImportImage}
@@ -530,6 +540,7 @@
             <div class="text-xs text-gray-400">Floor plan background</div>
           </div>
         </button>
+        {/if}
         <button
           class="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors hover:bg-gray-50 text-gray-700"
           onclick={onImportRoomPlan}

@@ -30,7 +30,7 @@ export const activeFloor = derived(currentProject, ($p) => {
   return $p.floors.find((f) => f.id === $p.activeFloorId) ?? $p.floors[0] ?? null;
 });
 
-export type Tool = 'select' | 'wall' | 'door' | 'window' | 'furniture' | 'text';
+export type Tool = 'select' | 'wall' | 'door' | 'window' | 'furniture' | 'text' | 'annotate' | 'measure';
 export const selectedTool = writable<Tool>('select');
 export const snapEnabled = writable<boolean>(true);
 /** When true, left-click drag pans the canvas instead of selecting */
@@ -40,6 +40,24 @@ export const selectedElementId = writable<string | null>(null);
 /** Multi-select: set of element IDs currently selected (used alongside selectedElementId for marquee/shift-click) */
 export const selectedElementIds = writable<Set<string>>(new Set());
 export const viewMode = writable<'2d' | '3d'>('2d');
+
+/** Simple mode: hides advanced/clutter UI so the flow is just: import scan → fix sizes → try furniture.
+ *  Default ON. Persisted to localStorage. Toggle in the top bar. */
+function loadSimpleMode(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    const v = localStorage.getItem('o3d_simple_mode');
+    return v === null ? true : v === '1';
+  } catch {
+    return true;
+  }
+}
+export const simpleMode = writable<boolean>(loadSimpleMode());
+if (typeof window !== 'undefined') {
+  simpleMode.subscribe((v) => {
+    try { localStorage.setItem('o3d_simple_mode', v ? '1' : '0'); } catch {}
+  });
+}
 
 // Undo / Redo
 interface UndoEntry {
@@ -246,6 +264,19 @@ export function moveFurniture(id: string, position: Point) {
  *  Alias for beginDrag() for backward compatibility. */
 export function commitFurnitureMove() {
   snapshot('Moved furniture');
+}
+
+/** Drop the top undo snapshot if the project hasn't actually changed since it was taken.
+ *  Called at the end of a pointer interaction so a mere tap/select (which snapshots at
+ *  mousedown but changes nothing) doesn't pollute the undo stack with no-op entries. */
+export function discardTopUndoIfUnchanged() {
+  if (undoGroupDepth > 0 || undoStack.length === 0) return;
+  const cur = get(currentProject);
+  if (!cur) return;
+  if (undoStack[undoStack.length - 1].state === JSON.stringify(cur)) {
+    undoStack.pop();
+    syncHistoryStore();
+  }
 }
 
 export function rotateFurniture(id: string, angle: number) {
@@ -538,6 +569,34 @@ export const placingRotation = writable<number>(0);
 export const placingDoorType = writable<Door['type']>('single');
 /** Window subtype currently selected for placement */
 export const placingWindowType = writable<import('$lib/models/types').Window['type']>('standard');
+
+/** Cancel ANY in-progress placement/tool and return to plain select mode.
+ *  Called by Escape and by clicking any toolbar tool, so the user can never get trapped. */
+export function cancelPlacement() {
+  selectedTool.set('select');
+  placingFurnitureId.set(null);
+  placingRotation.set(0);
+  placingStair.set(false);
+  placingColumn.set(false);
+  calibrationMode.set(false);
+  calibrationPoints.set([]);
+}
+
+/** Resize furniture to absolute width/depth (cm) without an undo snapshot (for drag).
+ *  Snapshot once at drag start. Keeps the same size representation the Properties panel uses. */
+export function resizeFurniture(id: string, dims: { width?: number; depth?: number; height?: number }) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  if (!floor) return;
+  const fi = floor.furniture.find((it) => it.id === id);
+  if (!fi) return;
+  if (dims.width != null) fi.width = dims.width;
+  if (dims.depth != null) fi.depth = dims.depth;
+  if (dims.height != null) fi.height = dims.height;
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+}
 
 /** Duplicate a door onto the same wall */
 export function duplicateDoor(id: string): string | null {

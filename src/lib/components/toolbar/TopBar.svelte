@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentProject, viewMode, undo, redo, addFloor, removeFloor, setActiveFloor, updateProjectName, loadProject, createDefaultProject, snapEnabled, canvasZoom, panMode, showFurnitureStore, layerVisibility, importFloorIntoCurrentProject } from '$lib/stores/project';
+  import { currentProject, viewMode, undo, redo, addFloor, removeFloor, setActiveFloor, updateProjectName, loadProject, createDefaultProject, snapEnabled, canvasZoom, panMode, showFurnitureStore, layerVisibility, importFloorIntoCurrentProject, simpleMode } from '$lib/stores/project';
   import { localStore } from '$lib/services/datastore';
   import { get } from 'svelte/store';
   import type { Floor, Project } from '$lib/models/types';
@@ -333,6 +333,14 @@
       <rect x="2" y="12" width="20" height="8" rx="1"/><path d="M4 12V7a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v5"/><line x1="12" y1="12" x2="12" y2="20"/>
     </svg>
   </button>
+
+  <!-- Simple mode toggle: hides advanced clutter -->
+  <button
+    onclick={() => simpleMode.update(v => !v)}
+    class="px-2.5 py-1 text-xs font-semibold rounded-full transition-colors {$simpleMode ? 'bg-emerald-400 text-slate-900' : 'text-white/70 hover:text-white hover:bg-white/10 ring-1 ring-white/25'}"
+    title={$simpleMode ? '簡單模式：開（淨係 掃描→改尺寸→試傢俬）。撳一下顯示全部工具' : '進階模式：全部工具。撳一下返簡單模式'}
+    aria-label="Toggle Simple mode"
+  >{$simpleMode ? '簡單 ✓' : '進階'}</button>
 
   <div class="h-5 w-px bg-white/20"></div>
 

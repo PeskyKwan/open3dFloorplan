@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentProject, viewMode, selectedElementId, selectedRoomId, createDefaultProject } from '$lib/stores/project';
+  import { currentProject, viewMode, selectedElementId, selectedRoomId, createDefaultProject, simpleMode } from '$lib/stores/project';
+  import { viewportKind, initViewportTracking } from '$lib/stores/viewport';
+  import MobileEditor from '$lib/components/mobile/MobileEditor.svelte';
   import { localStore } from '$lib/services/datastore';
   import TopBar from '$lib/components/toolbar/TopBar.svelte';
   import BuildPanel from '$lib/components/sidebar/BuildPanel.svelte';
@@ -66,6 +68,9 @@
       ready = true;
     })();
 
+    // Track viewport so we render the phone layout on small screens
+    const stopViewport = initViewportTracking();
+
     // Auto-save on every project change (debounced)
     let saveTimeout: ReturnType<typeof setTimeout>;
     const unsub = currentProject.subscribe((p) => {
@@ -73,13 +78,16 @@
       clearTimeout(saveTimeout);
       saveTimeout = setTimeout(() => localStore.save(p), 500);
     });
-    return () => { unsub(); clearTimeout(saveTimeout); };
+    return () => { unsub(); clearTimeout(saveTimeout); stopViewport(); };
   });
 </script>
 
 <svelte:window on:keydown={(e) => { if (e.key === 'p' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); printOpen = true; } if ((e.key === 'k' && (e.ctrlKey || e.metaKey)) || (e.key === '/' && !e.ctrlKey && !e.metaKey && (e.target as HTMLElement)?.tagName !== 'INPUT' && (e.target as HTMLElement)?.tagName !== 'TEXTAREA')) { e.preventDefault(); commandPaletteOpen = !commandPaletteOpen; } if (e.key === '?' && !e.ctrlKey && !e.metaKey) { showHelp = !showHelp; e.preventDefault(); } if (e.key === 'Escape' && showHelp) { showHelp = false; } if (e.key === 'l' && !e.ctrlKey && !e.metaKey && !e.altKey && (e.target as HTMLElement)?.tagName !== 'INPUT') { showLayers = !showLayers; } }} />
 
 {#if ready}
+  {#if $viewportKind === 'phone'}
+    <MobileEditor />
+  {:else}
   <div class="h-screen flex flex-col overflow-hidden">
     <TopBar />
     <div class="flex flex-1 overflow-hidden">
@@ -105,8 +113,8 @@
     </div>
   </div>
 
-  <!-- Layers toggle button -->
-  {#if mode === '2d'}
+  <!-- Layers toggle button (hidden in Simple mode) -->
+  {#if mode === '2d' && !$simpleMode}
     <button
       class="fixed bottom-4 left-14 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
       class:bg-blue-600={showLayers}
@@ -119,7 +127,8 @@
     >🗂</button>
   {/if}
 
-  <!-- Undo History toggle button -->
+  <!-- Undo History toggle button (hidden in Simple mode) -->
+  {#if !$simpleMode}
   <button
     class="fixed bottom-4 left-24 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
     class:bg-blue-600={showUndoHistory}
@@ -130,6 +139,7 @@
     title="Undo History"
     aria-label="Toggle Undo History"
   >⟲</button>
+  {/if}
 
   <UndoHistoryPanel bind:visible={showUndoHistory} />
 
@@ -315,6 +325,7 @@
   <CommandPalette bind:open={commandPaletteOpen} />
   <PrintLayout bind:open={printOpen} />
   <OnboardingTooltip />
+  {/if}
 {:else}
   <div class="h-screen flex items-center justify-center">
     <p class="text-gray-400">Loading...</p>

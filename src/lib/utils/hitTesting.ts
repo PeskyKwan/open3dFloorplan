@@ -78,9 +78,10 @@ export function findHandleAt(
   const angle = -(fi.rotation * Math.PI) / 180;
   const rx = dx * Math.cos(angle) - dy * Math.sin(angle);
   const ry = dx * Math.sin(angle) + dy * Math.cos(angle);
-  const hw = cat.width * Math.abs(fi.scale?.x ?? 1) / 2;
-  const hd = cat.depth * Math.abs(fi.scale?.y ?? 1) / 2;
-  const ht = 8 / zoom;
+  // Use effective dims (item override OR catalog) so handles hit-test where the renderer draws them.
+  const hw = (fi.width ?? cat.width) * Math.abs(fi.scale?.x ?? 1) / 2;
+  const hd = (fi.depth ?? cat.depth) * Math.abs(fi.scale?.y ?? 1) / 2;
+  const ht = 10 / zoom;
 
   const rotHandleDist = 18 / zoom;
   if (Math.abs(rx) < ht && Math.abs(ry - (-hd - rotHandleDist)) < ht) return 'rotate';
@@ -108,8 +109,8 @@ export function findFurnitureAt(p: Point, furniture: FurnitureItem[]): Furniture
     const angle = -(fi.rotation * Math.PI) / 180;
     const rx = dx * Math.cos(angle) - dy * Math.sin(angle);
     const ry = dx * Math.sin(angle) + dy * Math.cos(angle);
-    const hw = cat.width * Math.abs(fi.scale?.x ?? 1) / 2;
-    const hd = cat.depth * Math.abs(fi.scale?.y ?? 1) / 2;
+    const hw = (fi.width ?? cat.width) * Math.abs(fi.scale?.x ?? 1) / 2;
+    const hd = (fi.depth ?? cat.depth) * Math.abs(fi.scale?.y ?? 1) / 2;
     if (Math.abs(rx) < hw && Math.abs(ry) < hd) return fi;
   }
   return null;

@@ -4,6 +4,7 @@
   import { localStore } from '$lib/services/datastore';
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import WelcomeScreen from '$lib/components/WelcomeScreen.svelte';
+  import { scanAndCreateProject, isNativeScanAvailable } from '$lib/native/roomplanScan';
   import { houseTemplates } from '$lib/utils/houseTemplates';
 
   let projects = $state<{ id: string; name: string; updatedAt: string }[]>([]);
@@ -117,17 +118,24 @@
       <div class="flex items-center gap-3">
         <button
           onclick={() => showTemplateModal = true}
-          class="px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all flex items-center gap-2 border border-white/20"
+          class="hidden sm:flex px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all items-center gap-2 border border-white/20"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
           Templates
+        </button>
+        <button
+          onclick={() => scanAndCreateProject()}
+          class="px-4 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold text-sm shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+          {isNativeScanAvailable() ? '掃描 Scan' : 'Import 掃描'}
         </button>
         <button
           onclick={newProject}
           class="px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold text-sm shadow-lg shadow-blue-500/25 transition-all hover:shadow-blue-500/40 flex items-center gap-2"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New Project
+          <span class="hidden sm:inline">New Project</span><span class="sm:hidden">New</span>
         </button>
       </div>
     </div>

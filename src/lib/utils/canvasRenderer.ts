@@ -835,6 +835,14 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(cat.name, 0, d / 2 + fontSize * 0.8);
+    // When selected, also show the live size in cm so resizing/correcting sizes is obvious.
+    if (selected) {
+      const wCm = Math.round((item.width ?? cat.width) * Math.abs(sx));
+      const dCm = Math.round((item.depth ?? cat.depth) * Math.abs(sy));
+      ctx.fillStyle = '#2563eb';
+      ctx.font = `bold ${Math.max(9, fontSize * 0.75)}px sans-serif`;
+      ctx.fillText(`${wCm}×${dCm} cm`, 0, d / 2 + fontSize * 1.9);
+    }
   }
 
   if (selected) {
@@ -844,10 +852,10 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
     ctx.strokeRect(-w / 2 - 2, -d / 2 - 2, w + 4, d + 4);
     ctx.setLineDash([]);
 
-    const hs = 5;
+    const hs = 6; // corner handles — bigger = easier to grab
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     // Corner handles
     for (const [hx, hy] of [[-w/2, -d/2], [w/2, -d/2], [-w/2, d/2], [w/2, d/2]]) {
       ctx.fillRect(hx - hs, hy - hs, hs * 2, hs * 2);
@@ -855,7 +863,8 @@ export function drawFurnitureItem(cs: CanvasState, item: FurnitureItem, selected
     }
 
     // Edge midpoint handles
-    const ehs = 4; // slightly smaller
+    const ehs = 5; // slightly smaller than corners
+    ctx.lineWidth = 1.5;
     for (const [hx, hy] of [[0, -d/2], [0, d/2], [-w/2, 0], [w/2, 0]]) {
       ctx.fillRect(hx - ehs, hy - ehs, ehs * 2, ehs * 2);
       ctx.strokeRect(hx - ehs, hy - ehs, ehs * 2, ehs * 2);
