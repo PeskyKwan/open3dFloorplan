@@ -47,6 +47,11 @@
   function nudgeThk(d: number) { if (selWall) setThickness((selWall.thickness ?? 15) + d); }
   function delWall() { if (selWall) { removeElement(selWall.id); selectedElementId.set(null); } }
 
+  // Empty project → show the big scan call-to-action over the canvas
+  let hasContent = $derived(
+    !!floor && (((floor.walls?.length ?? 0) > 0) || ((floor.furniture?.length ?? 0) > 0))
+  );
+
   // ── lazy 3D ──
   let ThreeViewer = $state<any>(null);
   $effect(() => {
@@ -166,21 +171,21 @@
   }
 </script>
 
-<div class="h-screen w-full flex flex-col overflow-hidden relative bg-[#0b0f14]">
+<div class="h-screen w-full flex flex-col overflow-hidden relative bg-[#0b0f14]" style="padding-top: env(safe-area-inset-top);">
   <!-- Top bar -->
-  <div class="flex items-center gap-2 px-3 h-14 shrink-0">
-    <a href="/" class="w-10 h-10 rounded-full bg-[#1c2530] text-slate-200 flex items-center justify-center active:bg-[#26313d]" aria-label="Projects">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+  <div class="flex items-center gap-2 px-3 h-16 shrink-0">
+    <a href="/" class="h-12 pl-2 pr-4 rounded-full bg-[#1c2530] text-slate-100 flex items-center gap-1 active:bg-[#26313d]" aria-label="返去專案列表">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      <span class="text-[15px] font-medium">返去</span>
     </a>
     <div class="flex-1 min-w-0 text-center px-1">
-      <div class="text-sm font-medium text-white truncate">{project?.name ?? 'Untitled'}</div>
-      <div class="text-[11px] text-slate-500 truncate">{floor?.name ?? ''}</div>
+      <div class="text-base font-semibold text-white truncate">{project?.name ?? 'Untitled'}</div>
     </div>
-    <button onclick={() => undo()} class="w-10 h-10 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Undo 復原">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+    <button onclick={() => undo()} class="w-12 h-12 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Undo 復原">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
     </button>
-    <button onclick={() => redo()} class="w-10 h-10 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Redo 重做">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
+    <button onclick={() => redo()} class="w-12 h-12 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Redo 重做">
+      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
     </button>
   </div>
 
@@ -188,6 +193,20 @@
   <div class="flex-1 min-h-0 relative mx-3 rounded-2xl overflow-hidden bg-[#0d1218]">
     {#if mode === '2d'}
       <FloorPlanCanvas />
+
+      <!-- Empty project: big scan call-to-action so you can't get lost -->
+      {#if !hasContent}
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#0d1218]/70 pointer-events-none">
+          <button onclick={importScan} class="pointer-events-auto flex flex-col items-center gap-3 active:scale-95 transition-transform" aria-label="掃描房間">
+            <span class="w-28 h-28 rounded-full bg-gradient-to-b from-[#4a8df0] to-[#2f6fd8] shadow-2xl shadow-blue-500/40 flex items-center justify-center">
+              <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+            </span>
+            <span class="text-xl font-semibold text-white">掃描房間</span>
+          </button>
+          <p class="text-[15px] text-slate-400 text-center px-8">{isNativeScanAvailable() ? '拎住部機行一圈,自動出平面圖' : '匯入 RoomPlan .json / .zip 掃描檔'}</p>
+        </div>
+      {/if}
+
       <!-- Zoom controls (floating) -->
       <div class="absolute top-2 right-2 flex flex-col bg-[#0b0f14]/85 rounded-xl overflow-hidden">
         <button onclick={() => canvasZoom.update((z) => Math.min(10, z * 1.25))} class="w-11 h-11 text-2xl text-slate-200 active:bg-white/10" aria-label="Zoom in">+</button>
@@ -204,7 +223,7 @@
     {#if mode === '2d' && selFurniture}
       <div class="absolute left-2 right-2 bottom-2 bg-[#141b23] rounded-2xl p-4">
         <div class="flex items-center gap-2 mb-3">
-          <span class="text-base font-medium text-white truncate">{catOf(selFurniture)?.name ?? 'Furniture'}</span>
+          <span class="text-lg font-semibold text-white truncate">{catOf(selFurniture)?.name ?? 'Furniture'}</span>
           <div class="ml-auto flex gap-2">
             <button onclick={rotate90} class="w-11 h-11 rounded-full bg-[#1c2530] text-slate-200 flex items-center justify-center active:bg-[#26313d]" aria-label="Rotate 90">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
@@ -219,7 +238,7 @@
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <div class="text-[11px] text-slate-500 mb-1.5">闊 Width (cm)</div>
+            <div class="text-[13px] text-slate-500 mb-1.5">闊 Width (cm)</div>
             <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
               <button onclick={() => nudgeW(-1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Width down">−</button>
               <input type="number" inputmode="numeric" value={fw(selFurniture)} onchange={(e) => setWidth(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
@@ -227,7 +246,7 @@
             </div>
           </div>
           <div>
-            <div class="text-[11px] text-slate-500 mb-1.5">深 Depth (cm)</div>
+            <div class="text-[13px] text-slate-500 mb-1.5">深 Depth (cm)</div>
             <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
               <button onclick={() => nudgeD(-1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Depth down">−</button>
               <input type="number" inputmode="numeric" value={fd(selFurniture)} onchange={(e) => setDepth(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
@@ -235,12 +254,12 @@
             </div>
           </div>
         </div>
-        <div class="text-[11px] text-slate-500 mt-2.5 text-center">拖傢俬移位 · 拖角改尺寸 · 或用 ± / 打數字</div>
+        <div class="text-[13px] text-slate-500 mt-2.5 text-center">拖傢俬移位 · 拖角改尺寸 · 或用 ± / 打數字</div>
       </div>
     {:else if mode === '2d' && selWall}
       <div class="absolute left-2 right-2 bottom-2 bg-[#141b23] rounded-2xl p-4">
         <div class="flex items-center gap-2 mb-3">
-          <span class="text-base font-medium text-white">牆 Wall</span>
+          <span class="text-lg font-semibold text-white">牆 Wall</span>
           <span class="text-xs text-slate-500">長 {wallLen(selWall)} cm</span>
           <div class="ml-auto flex gap-2">
             <button onclick={delWall} class="w-11 h-11 rounded-full bg-[#2a1416] text-[#f0787a] flex items-center justify-center active:bg-[#3a1a1c]" aria-label="Delete wall">
@@ -251,46 +270,46 @@
             </button>
           </div>
         </div>
-        <div class="text-[11px] text-slate-500 mb-1.5">牆厚 Thickness (cm)</div>
+        <div class="text-[13px] text-slate-500 mb-1.5">牆厚 Thickness (cm)</div>
         <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12 mb-1.5">
           <button onclick={() => nudgeThk(-1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thinner">−</button>
           <input type="number" inputmode="numeric" value={Math.round(selWall.thickness ?? 15)} onchange={(e) => setThickness(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
           <button onclick={() => nudgeThk(1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thicker">+</button>
         </div>
-        <div class="text-[11px] text-slate-500 text-center">掃描量唔到牆厚,預設 15cm — 度返實際改</div>
+        <div class="text-[13px] text-slate-500 text-center">掃描量唔到牆厚,預設 15cm — 度返實際改</div>
       </div>
     {/if}
   </div>
 
-  <!-- Bottom quick-action bar (Tesla-style round buttons) -->
-  <div class="flex justify-between gap-1 px-4 pt-3 pb-5 shrink-0">
-    <button onclick={() => openSheet('furniture')} class="flex-1 flex flex-col items-center gap-1.5" aria-label="傢俬">
-      <span class="w-12 h-12 rounded-full flex items-center justify-center {sheet === 'furniture' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20v6H2zM4 12V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M6 18v2M18 18v2"/></svg>
+  <!-- Bottom action bar — Scan is the big centre button (camera-app style) -->
+  <div class="flex items-end justify-between gap-1 px-3 pt-2 shrink-0" style="padding-bottom: max(1rem, env(safe-area-inset-bottom));">
+    <button onclick={() => openSheet('furniture')} class="flex-1 flex flex-col items-center gap-1" aria-label="傢俬">
+      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'furniture' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20v6H2zM4 12V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M6 18v2M18 18v2"/></svg>
       </span>
-      <span class="text-[10px] {sheet === 'furniture' ? 'text-slate-200' : 'text-slate-500'}">傢俬</span>
+      <span class="text-[12px] font-medium {sheet === 'furniture' ? 'text-white' : 'text-slate-400'}">傢俬</span>
     </button>
-    <button onclick={() => openSheet('arrange')} class="flex-1 flex flex-col items-center gap-1.5" aria-label="執位">
-      <span class="w-12 h-12 rounded-full flex items-center justify-center {sheet === 'arrange' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.6 5.6 21l2.4-7.2L2 9.2h7.6z"/></svg>
+    <button onclick={() => openSheet('arrange')} class="flex-1 flex flex-col items-center gap-1" aria-label="執位">
+      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'arrange' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.6 5.6 21l2.4-7.2L2 9.2h7.6z"/></svg>
       </span>
-      <span class="text-[10px] {sheet === 'arrange' ? 'text-slate-200' : 'text-slate-500'}">執位</span>
+      <span class="text-[12px] font-medium {sheet === 'arrange' ? 'text-white' : 'text-slate-400'}">執位</span>
     </button>
-    <button onclick={() => openSheet('tools')} class="flex-1 flex flex-col items-center gap-1.5" aria-label="工具">
-      <span class="w-12 h-12 rounded-full flex items-center justify-center {sheet === 'tools' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3zM13 13l6 6"/></svg>
+    <button onclick={importScan} class="flex-1 flex flex-col items-center gap-1 -mt-5" aria-label="掃描房間">
+      <span class="w-[72px] h-[72px] rounded-full bg-gradient-to-b from-[#4a8df0] to-[#2f6fd8] text-white shadow-xl shadow-blue-500/40 flex items-center justify-center border-4 border-[#0b0f14]">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
       </span>
-      <span class="text-[10px] {sheet === 'tools' ? 'text-slate-200' : 'text-slate-500'}">工具</span>
+      <span class="text-[12px] font-semibold text-[#5b9bf6]">掃描</span>
     </button>
-    <button onclick={() => viewMode.set(mode === '3d' ? '2d' : '3d')} class="flex-1 flex flex-col items-center gap-1.5" aria-label="3D 睇">
-      <span class="w-12 h-12 rounded-full flex items-center justify-center text-sm font-semibold {mode === '3d' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">{mode === '3d' ? '2D' : '3D'}</span>
-      <span class="text-[10px] {mode === '3d' ? 'text-slate-200' : 'text-slate-500'}">{mode === '3d' ? '2D 平面' : '3D 睇'}</span>
+    <button onclick={() => viewMode.set(mode === '3d' ? '2d' : '3d')} class="flex-1 flex flex-col items-center gap-1" aria-label="3D 睇">
+      <span class="w-14 h-14 rounded-full flex items-center justify-center text-base font-bold {mode === '3d' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">{mode === '3d' ? '2D' : '3D'}</span>
+      <span class="text-[12px] font-medium {mode === '3d' ? 'text-white' : 'text-slate-400'}">{mode === '3d' ? '平面' : '立體'}</span>
     </button>
-    <button onclick={() => openSheet('more')} class="flex-1 flex flex-col items-center gap-1.5" aria-label="更多">
-      <span class="w-12 h-12 rounded-full flex items-center justify-center {sheet === 'more' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
+    <button onclick={() => openSheet('more')} class="flex-1 flex flex-col items-center gap-1" aria-label="更多">
+      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'more' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
       </span>
-      <span class="text-[10px] {sheet === 'more' ? 'text-slate-200' : 'text-slate-500'}">更多</span>
+      <span class="text-[12px] font-medium {sheet === 'more' ? 'text-white' : 'text-slate-400'}">更多</span>
     </button>
   </div>
 
@@ -302,73 +321,73 @@
     <div class="absolute left-0 right-0 bottom-0 z-50 bg-[#141b23] rounded-t-3xl max-h-[72%] flex flex-col">
       <div class="relative flex items-center px-4 pt-4 pb-3">
         <div class="w-10 h-1 bg-white/20 rounded-full absolute left-1/2 -translate-x-1/2 top-2"></div>
-        <h2 class="text-sm font-medium text-white mt-1">
-          {sheet === 'tools' ? '工具' : sheet === 'furniture' ? '傢俬' : sheet === 'arrange' ? '執位 / 試位' : '更多'}
+        <h2 class="text-base font-semibold text-white mt-1">
+          {sheet === 'furniture' ? '傢俬' : sheet === 'arrange' ? '執位 / 試位' : '更多'}
         </h2>
         <button onclick={closeSheet} class="ml-auto w-8 h-8 rounded-full bg-[#1c2530] text-slate-300 flex items-center justify-center leading-none active:bg-[#26313d]" aria-label="Close">✕</button>
       </div>
 
-      <div class="overflow-y-auto px-3 pb-5">
-        {#if sheet === 'tools'}
-          <div class="grid grid-cols-2 gap-2">
-            <button onclick={() => pick('select')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-medium text-sm text-white">↖︎ 揀 Select</div>
-              <div class="text-xs text-slate-500 mt-0.5">撳嚟揀 / 改嘢</div>
-            </button>
-            <button onclick={() => pick('wall')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-medium text-sm text-white">▭ 畫牆 Wall</div>
-              <div class="text-xs text-slate-500 mt-0.5">撳兩點畫，dbl 收</div>
-            </button>
-            <button onclick={addStairs} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-medium text-sm text-white">▦ 樓梯 Stairs</div>
-              <div class="text-xs text-slate-500 mt-0.5">撳畫面放樓梯</div>
-            </button>
-            <button onclick={importScan} class="p-4 rounded-2xl bg-[#12233c] active:bg-[#16304f] text-left">
-              <div class="font-medium text-sm text-[#5b9bf6]">◎ {isNativeScanAvailable() ? '掃描 Scan' : 'Import 掃描'}</div>
-              <div class="text-xs text-[#5b9bf6]/60 mt-0.5">{isNativeScanAvailable() ? 'LiDAR 掃間房' : '匯入 .json/.zip'}</div>
-            </button>
-          </div>
-        {:else if sheet === 'furniture'}
-          <input type="text" placeholder="搵傢俬…" bind:value={search} class="w-full px-3 h-11 bg-[#0f151c] rounded-xl text-sm text-white placeholder-slate-500 mb-3 outline-none" />
+      <div class="overflow-y-auto px-3 pb-6">
+        {#if sheet === 'furniture'}
+          <input type="text" placeholder="搵傢俬…" bind:value={search} class="w-full px-4 h-12 bg-[#0f151c] rounded-xl text-base text-white placeholder-slate-500 mb-3 outline-none" />
           <div class="grid grid-cols-3 gap-2">
             {#each filtered as item (item.id)}
-              <button onclick={() => placeFurniture(item)} class="flex flex-col items-center gap-1 p-2.5 rounded-2xl bg-[#0f151c] active:bg-[#1c2530]">
-                <span class="text-2xl">{item.icon}</span>
-                <span class="text-[11px] text-slate-300 text-center leading-tight">{item.name}</span>
-                <span class="text-[10px] text-slate-500">{item.width}×{item.depth}</span>
+              <button onclick={() => placeFurniture(item)} class="flex flex-col items-center gap-1 p-3 rounded-2xl bg-[#0f151c] active:bg-[#1c2530]">
+                <span class="text-3xl">{item.icon}</span>
+                <span class="text-[13px] text-slate-200 text-center leading-tight">{item.name}</span>
+                <span class="text-[12px] text-slate-500">{item.width}×{item.depth}</span>
               </button>
             {/each}
           </div>
         {:else if sheet === 'arrange'}
           <button onclick={autoArrange} disabled={arranging} class="w-full p-4 rounded-2xl bg-[#12233c] active:bg-[#16304f] text-left mb-3">
-            <div class="font-medium text-sm text-[#5b9bf6]">✨ Auto-arrange / 一鍵執靚</div>
-            <div class="text-xs text-[#5b9bf6]/60 mt-0.5">{arrangeMsg || '間房傢俬貼牆排好、唔重疊'}</div>
+            <div class="font-semibold text-base text-[#5b9bf6]">✨ 一鍵執靚 Auto-arrange</div>
+            <div class="text-[13px] text-[#5b9bf6]/70 mt-1">{arrangeMsg || '間房傢俬貼牆排好、唔重疊'}</div>
           </button>
-          <div class="p-3 rounded-2xl bg-[#0f151c]">
-            <div class="text-xs font-medium text-[#b79bf6] mb-2">🛒 試位 Fit-check — 買之前試吓擺唔擺得落</div>
-            <select bind:value={fitCatalogId} class="w-full px-2 h-11 bg-[#141b23] rounded-xl text-sm text-white mb-2 outline-none">
+          <div class="p-4 rounded-2xl bg-[#0f151c]">
+            <div class="text-[14px] font-semibold text-[#b79bf6] mb-2.5">🛒 試位 — 買之前試吓擺唔擺得落</div>
+            <select bind:value={fitCatalogId} class="w-full px-3 h-12 bg-[#141b23] rounded-xl text-base text-white mb-2 outline-none">
               {#each furnitureCatalog as f}
                 <option value={f.id}>{f.icon} {f.name} · {f.width}×{f.depth}cm</option>
               {/each}
             </select>
-            <div class="flex gap-2 mb-2">
-              <input type="number" inputmode="numeric" bind:value={fitW} placeholder="闊 cm" class="w-1/2 px-2 h-11 bg-[#141b23] rounded-xl text-sm text-white placeholder-slate-500 outline-none" />
-              <input type="number" inputmode="numeric" bind:value={fitD} placeholder="深 cm" class="w-1/2 px-2 h-11 bg-[#141b23] rounded-xl text-sm text-white placeholder-slate-500 outline-none" />
+            <div class="flex gap-2 mb-2.5">
+              <input type="number" inputmode="numeric" bind:value={fitW} placeholder="闊 cm" class="w-1/2 px-3 h-12 bg-[#141b23] rounded-xl text-base text-white placeholder-slate-500 outline-none" />
+              <input type="number" inputmode="numeric" bind:value={fitD} placeholder="深 cm" class="w-1/2 px-3 h-12 bg-[#141b23] rounded-xl text-base text-white placeholder-slate-500 outline-none" />
             </div>
-            <button onclick={fitCheck} class="w-full h-11 rounded-xl text-sm font-medium bg-[#7c5cf0] active:bg-[#6b4be0] text-white">✨ 試位 / Find a spot</button>
-            {#if fitMsg}<p class="text-xs mt-2 {fitOk ? 'text-emerald-400' : 'text-[#f0787a]'}">{fitMsg}</p>{/if}
+            <button onclick={fitCheck} class="w-full h-12 rounded-xl text-base font-semibold bg-[#7c5cf0] active:bg-[#6b4be0] text-white">✨ 試位 / Find a spot</button>
+            {#if fitMsg}<p class="text-[14px] mt-2.5 {fitOk ? 'text-emerald-400' : 'text-[#f0787a]'}">{fitMsg}</p>{/if}
           </div>
         {:else if sheet === 'more'}
+          <div class="text-[13px] font-medium text-slate-500 px-1 mb-2">工具</div>
+          <div class="grid grid-cols-2 gap-2 mb-4">
+            <button onclick={() => pick('select')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="font-semibold text-base text-white">↖︎ 揀嘢</div>
+              <div class="text-[13px] text-slate-500 mt-1">撳嚟揀 / 改嘢</div>
+            </button>
+            <button onclick={() => pick('wall')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="font-semibold text-base text-white">▭ 畫牆</div>
+              <div class="text-[13px] text-slate-500 mt-1">撳兩點畫一幅牆</div>
+            </button>
+            <button onclick={addStairs} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="font-semibold text-base text-white">▦ 樓梯</div>
+              <div class="text-[13px] text-slate-500 mt-1">撳畫面放樓梯</div>
+            </button>
+            <button onclick={importScan} class="p-4 rounded-2xl bg-[#12233c] active:bg-[#16304f] text-left">
+              <div class="font-semibold text-base text-[#5b9bf6]">◎ {isNativeScanAvailable() ? '掃描' : 'Import 掃描'}</div>
+              <div class="text-[13px] text-[#5b9bf6]/70 mt-1">{isNativeScanAvailable() ? 'LiDAR 掃間房' : '匯入 .json/.zip'}</div>
+            </button>
+          </div>
           <div class="space-y-2">
             <button onclick={() => { simpleMode.update((v) => !v); }} class="w-full p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left flex items-center">
               <div>
-                <div class="font-medium text-sm text-white">簡單模式</div>
-                <div class="text-xs text-slate-500 mt-0.5">收埋進階工具（鎖牆防誤觸）</div>
+                <div class="font-semibold text-base text-white">簡單模式</div>
+                <div class="text-[13px] text-slate-500 mt-1">收埋進階工具（鎖牆防誤觸）</div>
               </div>
-              <span class="ml-auto text-sm font-medium {$simpleMode ? 'text-emerald-400' : 'text-slate-500'}">{$simpleMode ? '開 ✓' : '關'}</span>
+              <span class="ml-auto text-base font-semibold {$simpleMode ? 'text-emerald-400' : 'text-slate-500'}">{$simpleMode ? '開 ✓' : '關'}</span>
             </button>
             <a href="/" class="block w-full p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-medium text-sm text-white">← 返專案列表</div>
+              <div class="font-semibold text-base text-white">← 返專案列表</div>
             </a>
           </div>
         {/if}

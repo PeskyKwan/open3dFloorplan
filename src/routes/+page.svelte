@@ -6,6 +6,7 @@
   import { createDefaultProject, currentProject } from '$lib/stores/project';
   import WelcomeScreen from '$lib/components/WelcomeScreen.svelte';
   import { scanAndCreateProject, isNativeScanAvailable } from '$lib/native/roomplanScan';
+  import { isNativeApp } from '$lib/stores/viewport';
   import { houseTemplates } from '$lib/utils/houseTemplates';
 
   let projects = $state<{ id: string; name: string; updatedAt: string }[]>([]);
@@ -28,7 +29,9 @@
     }
     thumbnails = thumbs;
     const seen = localStorage.getItem('hasSeenWelcome');
-    if (!seen && projects.length === 0) {
+    // The welcome tour describes the desktop UI — skip it inside the iPhone app,
+    // where the empty state below shows a big Scan button instead.
+    if (!seen && projects.length === 0 && !isNativeApp()) {
       showWelcome = true;
     }
   });
@@ -110,33 +113,52 @@
 
 <div class="min-h-screen bg-gray-50">
   <!-- Header -->
-  <div class="bg-gradient-to-r from-slate-800 to-slate-700 shadow-sm">
-    <div class="max-w-5xl mx-auto px-6 py-5 flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold text-white">Floor Plan Editor</h1>
-        <p class="text-sm text-white/50 mt-0.5">{projects.length} project{projects.length !== 1 ? 's' : ''}</p>
+  <div class="bg-gradient-to-r from-slate-800 to-slate-700 shadow-sm" style="padding-top: env(safe-area-inset-top);">
+    <div class="max-w-5xl mx-auto px-5 sm:px-6 py-4 sm:py-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-xl sm:text-2xl font-bold text-white">我嘅平面圖</h1>
+          <p class="text-sm text-white/50 mt-0.5">{projects.length} 個專案</p>
+        </div>
+        <div class="hidden sm:flex items-center gap-3">
+          <button
+            onclick={() => showTemplateModal = true}
+            class="flex px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all items-center gap-2 border border-white/20"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+            Templates
+          </button>
+          <button
+            onclick={() => scanAndCreateProject()}
+            class="px-4 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold text-sm shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+            {isNativeScanAvailable() ? '掃描 Scan' : 'Import 掃描'}
+          </button>
+          <button
+            onclick={newProject}
+            class="px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold text-sm shadow-lg shadow-blue-500/25 transition-all hover:shadow-blue-500/40 flex items-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Project
+          </button>
+        </div>
       </div>
-      <div class="flex items-center gap-3">
-        <button
-          onclick={() => showTemplateModal = true}
-          class="hidden sm:flex px-4 py-2.5 bg-white/10 text-white rounded-lg hover:bg-white/20 font-medium text-sm transition-all items-center gap-2 border border-white/20"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-          Templates
-        </button>
+      <!-- Phone: two big thumb-sized buttons under the title -->
+      <div class="sm:hidden flex gap-3 mt-4">
         <button
           onclick={() => scanAndCreateProject()}
-          class="px-4 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold text-sm shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2"
+          class="flex-[3] h-14 bg-emerald-500 text-white rounded-2xl active:bg-emerald-600 font-bold text-[17px] shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2.5"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-          {isNativeScanAvailable() ? '掃描 Scan' : 'Import 掃描'}
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+          {isNativeScanAvailable() ? '掃描房間' : 'Import 掃描'}
         </button>
         <button
           onclick={newProject}
-          class="px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold text-sm shadow-lg shadow-blue-500/25 transition-all hover:shadow-blue-500/40 flex items-center gap-2"
+          class="flex-[2] h-14 bg-blue-500 text-white rounded-2xl active:bg-blue-600 font-bold text-[17px] shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          <span class="hidden sm:inline">New Project</span><span class="sm:hidden">New</span>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          新專案
         </button>
       </div>
     </div>
@@ -144,18 +166,20 @@
 
   <div class="max-w-5xl mx-auto px-6 py-8">
     {#if projects.length === 0}
-      <div class="text-center py-24">
-        <div class="w-16 h-16 bg-gray-200 rounded-2xl flex items-center justify-center mx-auto mb-4">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-gray-400"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-        </div>
-        <p class="text-lg text-gray-400 font-medium">No projects yet</p>
-        <p class="text-sm text-gray-300 mt-1">Create your first floor plan to get started</p>
-        <div class="mt-6 flex items-center gap-3 justify-center">
-          <button onclick={newProject} class="px-5 py-2.5 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-semibold text-sm">
-            Create Project
+      <div class="text-center py-16 sm:py-24">
+        <button onclick={() => scanAndCreateProject()} class="flex flex-col items-center gap-4 mx-auto active:scale-95 transition-transform" aria-label="掃描房間">
+          <span class="w-28 h-28 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 shadow-2xl shadow-emerald-500/40 flex items-center justify-center">
+            <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+          </span>
+          <span class="text-2xl font-bold text-gray-800">{isNativeScanAvailable() ? '掃描房間' : 'Import 掃描'}</span>
+        </button>
+        <p class="text-[15px] text-gray-400 mt-3 px-8">{isNativeScanAvailable() ? '拎住部機喺房行一圈,自動出平面圖' : '匯入 RoomPlan 掃描檔開始'}</p>
+        <div class="mt-8 flex items-center gap-3 justify-center">
+          <button onclick={newProject} class="px-5 h-12 bg-blue-500 text-white rounded-xl active:bg-blue-600 hover:bg-blue-600 font-semibold text-[15px]">
+            空白新專案
           </button>
-          <button onclick={() => showTemplateModal = true} class="px-5 py-2.5 bg-white text-gray-700 rounded-lg hover:bg-gray-100 font-semibold text-sm border border-gray-200">
-            Start from Template
+          <button onclick={() => showTemplateModal = true} class="px-5 h-12 bg-white text-gray-700 rounded-xl active:bg-gray-100 hover:bg-gray-100 font-semibold text-[15px] border border-gray-200">
+            用範本開始
           </button>
         </div>
       </div>
@@ -189,18 +213,18 @@
                 />
               {:else}
                 <a href={`${base}/editor?id=${project.id}`} class="block">
-                  <h3 class="font-semibold text-gray-800 text-sm truncate">{project.name || 'Untitled Project'}</h3>
+                  <h3 class="font-semibold text-gray-800 text-[15px] truncate">{project.name || 'Untitled Project'}</h3>
                 </a>
               {/if}
-              <p class="text-xs text-gray-400 mt-1">{formatDate(project.updatedAt)}</p>
+              <p class="text-[13px] text-gray-400 mt-1">{formatDate(project.updatedAt)}</p>
             </div>
 
             <!-- Actions menu button -->
             <button
               onclick={(e) => { e.stopPropagation(); contextMenuId = contextMenuId === project.id ? null : project.id; }}
-              class="absolute top-3 right-3 w-8 h-8 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-gray-200 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50"
+              class="absolute top-3 right-3 w-10 h-10 bg-white/90 backdrop-blur rounded-lg shadow-sm border border-gray-200 flex items-center justify-center max-sm:opacity-100 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-gray-50"
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" class="text-gray-500"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" class="text-gray-500"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>
             </button>
 
             <!-- Context menu -->
@@ -209,15 +233,15 @@
                 class="absolute top-12 right-3 bg-white rounded-lg shadow-xl border border-gray-200 py-1 w-40 z-50"
                 onclick={(e) => e.stopPropagation()}
               >
-                <button onclick={() => { goto(`${base}/editor?id=${project.id}`); }} class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
+                <button onclick={() => { goto(`${base}/editor?id=${project.id}`); }} class="w-full px-3 py-3 text-[15px] text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
                   Open
                 </button>
-                <button onclick={() => startRename(project.id, project.name)} class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
+                <button onclick={() => startRename(project.id, project.name)} class="w-full px-3 py-3 text-[15px] text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
                   Rename
                 </button>
-                <button onclick={() => duplicateProject(project.id)} class="w-full px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
+                <button onclick={() => duplicateProject(project.id)} class="w-full px-3 py-3 text-[15px] text-gray-700 hover:bg-gray-50 text-left flex items-center gap-2">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   Duplicate
                 </button>
@@ -229,7 +253,7 @@
                     <button onclick={() => confirmDeleteId = null} class="px-2 py-1 bg-gray-200 text-gray-600 text-xs rounded hover:bg-gray-300">No</button>
                   </div>
                 {:else}
-                  <button onclick={() => { confirmDeleteId = project.id; }} class="w-full px-3 py-2 text-sm text-red-500 hover:bg-red-50 text-left flex items-center gap-2">
+                  <button onclick={() => { confirmDeleteId = project.id; }} class="w-full px-3 py-3 text-[15px] text-red-500 hover:bg-red-50 text-left flex items-center gap-2">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
                     Delete
                   </button>
