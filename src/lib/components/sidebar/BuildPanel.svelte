@@ -829,7 +829,8 @@
           {/each}
         </div>
 
-        <!-- Entourage: 2D presentation symbols (people, cars, planting) -->
+        <!-- Entourage: 2D presentation symbols (people, cars, planting) — hidden in Simple mode -->
+        {#if !$simpleMode}
         <div class="pt-3 mt-2 border-t border-gray-100">
           <h3 class="text-xs font-semibold text-gray-400 uppercase mb-2">Entourage</h3>
           {#each entourageCategories as cat}
@@ -875,6 +876,7 @@
           >+ Upload PNG symbol</button>
           <input type="file" accept="image/png,image/jpeg,image/webp" class="hidden" bind:this={entourageFileInput} onchange={onEntourageUpload} />
         </div>
+        {/if}
       </div>
     {/if}
   </div>

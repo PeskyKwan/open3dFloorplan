@@ -2222,6 +2222,13 @@
         rotateFurniture(id, rot);
       }
       selectedElementId.set(id);
+      // Exit placement after one placement (hold Shift to keep stamping),
+      // so the tool never stays "stuck" placing more items on every click.
+      if (!e.shiftKey) {
+        placingFurnitureId.set(null);
+        placingRotation.set(0);
+        selectedTool.set('select');
+      }
       return;
     }
 

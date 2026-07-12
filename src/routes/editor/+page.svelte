@@ -414,7 +414,10 @@
 
   <CommandPalette bind:open={commandPaletteOpen} />
   <PrintLayout bind:open={printOpen} />
-  <OnboardingTooltip />
+  <!-- Onboarding walkthrough tips: suppressed in Simple mode -->
+  {#if !$simpleMode}
+    <OnboardingTooltip />
+  {/if}
   {/if}
 {:else}
   <div class="h-screen flex flex-col items-center justify-center gap-3">

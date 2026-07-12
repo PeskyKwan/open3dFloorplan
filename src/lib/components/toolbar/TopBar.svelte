@@ -387,7 +387,8 @@
     </div>
   {/if}
 
-  <!-- Version History button -->
+  <!-- Version History button (hidden in Simple mode) -->
+  {#if !$simpleMode}
   <button
     onclick={() => versionHistoryOpen = true}
     class="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded transition-colors max-md:hidden"
@@ -396,6 +397,7 @@
   >
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
   </button>
+  {/if}
 
   <!-- Area summary button -->
   <button
