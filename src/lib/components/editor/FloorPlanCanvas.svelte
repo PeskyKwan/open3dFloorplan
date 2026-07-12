@@ -3124,6 +3124,10 @@
   let twistTargetId: string | null = null;
   let twistStartRotation = 0;
   let twistEngaged = false;
+  // Two-finger PINCH on a selected element resizes it (door/window width,
+  // furniture width+depth). While a selected element is being adjusted the
+  // pinch does NOT zoom the canvas — deselect first to zoom.
+  let pinchAdj: { kind: 'furniture' | 'door' | 'window'; id: string; w: number; d: number; startDist: number; engaged: boolean } | null = null;
   let singleTouchActive = false;
   let lastTapTime = 0;
   let lastTapX = 0;
@@ -3158,15 +3162,28 @@
         cy: (a.clientY + b.clientY) / 2,
         angle: Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI,
       };
-      // A furniture piece is selected → the twist component of this gesture rotates it
-      twistTargetId = null; twistEngaged = false;
-      if (currentSelectedId && currentFloor?.furniture.some((f) => f.id === currentSelectedId && !f.locked)) {
-        const fi = currentFloor.furniture.find((f) => f.id === currentSelectedId)!;
-        twistTargetId = fi.id;
-        twistStartRotation = fi.rotation ?? 0;
-        dragStartFurniturePos = { x: fi.position.x, y: fi.position.y };
-        dragStartRotation = twistStartRotation;
-        commitFurnitureMove(); // undo snapshot before the rotation gesture
+      // Selected element → this gesture adjusts IT (twist rotates furniture,
+      // pinch resizes furniture / door / window) instead of zooming the canvas.
+      twistTargetId = null; twistEngaged = false; pinchAdj = null;
+      if (currentSelectedId && currentFloor) {
+        const fi = currentFloor.furniture.find((f) => f.id === currentSelectedId && !f.locked);
+        const dr = currentFloor.doors.find((d) => d.id === currentSelectedId);
+        const wn = currentFloor.windows.find((w) => w.id === currentSelectedId);
+        if (fi) {
+          twistTargetId = fi.id;
+          twistStartRotation = fi.rotation ?? 0;
+          dragStartFurniturePos = { x: fi.position.x, y: fi.position.y };
+          dragStartRotation = twistStartRotation;
+          const cat = getCatalogItem(fi.catalogId);
+          pinchAdj = { kind: 'furniture', id: fi.id, w: fi.width ?? cat?.width ?? 100, d: fi.depth ?? cat?.depth ?? 80, startDist: pinchState.dist, engaged: false };
+          commitFurnitureMove(); // undo snapshot before the gesture
+        } else if (dr) {
+          pinchAdj = { kind: 'door', id: dr.id, w: dr.width, d: 0, startDist: pinchState.dist, engaged: false };
+          beginUndoGroup();
+        } else if (wn) {
+          pinchAdj = { kind: 'window', id: wn.id, w: wn.width, d: 0, startDist: pinchState.dist, engaged: false };
+          beginUndoGroup();
+        }
       }
     }
   }
@@ -3180,16 +3197,31 @@
       const cy = (a.clientY + b.clientY) / 2;
       const rect = canvas.getBoundingClientRect();
       const sx = cx - rect.left, sy = cy - rect.top;
-      // Zoom about the pinch midpoint (same math as onWheel)
-      const newZoom = Math.max(0.1, Math.min(10, zoom * (dist / (pinchState.dist || dist))));
-      const worldX = (sx - width / 2) / zoom + camX;
-      const worldY = (sy - height / 2) / zoom + camY;
-      camX = worldX - (sx - width / 2) / newZoom;
-      camY = worldY - (sy - height / 2) / newZoom;
-      zoom = newZoom;
-      // Two-finger pan: camera follows the midpoint
-      camX -= (cx - pinchState.cx) / newZoom;
-      camY -= (cy - pinchState.cy) / newZoom;
+      if (pinchAdj) {
+        // Pinch resizes the SELECTED element (canvas zoom is off while adjusting)
+        const ratio = dist / (pinchAdj.startDist || dist);
+        if (!pinchAdj.engaged && Math.abs(ratio - 1) > 0.05) pinchAdj.engaged = true;
+        if (pinchAdj.engaged) {
+          if (pinchAdj.kind === 'door') {
+            updateDoor(pinchAdj.id, { width: Math.max(30, Math.round(pinchAdj.w * ratio)) });
+          } else if (pinchAdj.kind === 'window') {
+            updateWindow(pinchAdj.id, { width: Math.max(20, Math.round(pinchAdj.w * ratio)) });
+          } else {
+            resizeFurniture(pinchAdj.id, { width: Math.max(10, Math.round(pinchAdj.w * ratio)), depth: Math.max(10, Math.round(pinchAdj.d * ratio)) });
+          }
+        }
+      } else {
+        // Zoom about the pinch midpoint (same math as onWheel)
+        const newZoom = Math.max(0.1, Math.min(10, zoom * (dist / (pinchState.dist || dist))));
+        const worldX = (sx - width / 2) / zoom + camX;
+        const worldY = (sy - height / 2) / zoom + camY;
+        camX = worldX - (sx - width / 2) / newZoom;
+        camY = worldY - (sy - height / 2) / newZoom;
+        zoom = newZoom;
+        // Two-finger pan: camera follows the midpoint
+        camX -= (cx - pinchState.cx) / newZoom;
+        camY -= (cy - pinchState.cy) / newZoom;
+      }
       // Twist → rotate the selected furniture piece
       const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
       if (twistTargetId) {
@@ -3221,6 +3253,10 @@
         if (twistTargetId) {
           if (twistEngaged) resolveFurnitureWallOverlap(twistTargetId, false);
           twistTargetId = null; twistEngaged = false;
+        }
+        if (pinchAdj) {
+          if (pinchAdj.kind !== 'furniture') endUndoGroup('resize ' + pinchAdj.kind);
+          pinchAdj = null;
         }
       }
       return;
