@@ -33,11 +33,11 @@ npx cap add ios        # creates ios/ (Xcode project) + runs pod install
 **C. Add the RoomPlan plugin to the app**
 Copy the three files into the iOS app target folder:
 ```
-cp native/ios/RoomPlanPlugin.swift native/ios/RoomPlanPlugin.m native/ios/RoomScanViewController.swift ios/App/App/
+cp native/ios/RoomPlanPlugin.swift native/ios/RoomScanViewController.swift native/ios/AppViewController.swift ios/App/App/
 ```
 Then in Xcode (next step) make sure those 3 files show under the **App** target
 (if not: right-click the App group → *Add Files to "App"…* → pick them → Target = App).
-If Xcode offers to create an Objective-C **bridging header**, click **Create** (needed once for the `.m`).
+Also point Main.storyboard's view controller at the custom class: open `ios/App/App/Base.lproj/Main.storyboard` and change `customClass="CAPBridgeViewController" customModule="Capacitor"` to `customClass="AppViewController" customModule="App" customModuleProvider="target"`. (This is what actually registers the RoomPlan plugin — Capacitor 6 ignores app-local plugins otherwise.)
 
 **D. Camera permission + iOS version**
 ```

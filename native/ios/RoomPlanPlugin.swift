@@ -8,7 +8,13 @@ import RoomPlan
 /// The JSON is `JSONEncoder().encode(CapturedRoom)` — the SAME format the OpenPlan3D
 /// web importer (roomplanImport.ts) already reads, so no format translation is needed.
 @objc(RoomPlanPlugin)
-public class RoomPlanPlugin: CAPPlugin {
+public class RoomPlanPlugin: CAPPlugin, CAPBridgedPlugin {
+    // CAPBridgedPlugin conformance (Capacitor 6+ registration metadata).
+    public let identifier = "RoomPlanPlugin"
+    public let jsName = "RoomPlan"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "scan", returnType: CAPPluginReturnPromise)
+    ]
 
     private var pendingCall: CAPPluginCall?
 
