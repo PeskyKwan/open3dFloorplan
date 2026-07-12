@@ -146,22 +146,22 @@ export function findStairAt(p: Point, stairs: Stair[] | undefined): Stair | null
   return null;
 }
 
-export function findDoorAt(p: Point, doors: Door[], walls: Wall[], zoom: number): Door | null {
+export function findDoorAt(p: Point, doors: Door[], walls: Wall[], zoom: number, pad = 5): Door | null {
   for (const d of doors) {
     const wall = walls.find(w => w.id === d.wallId);
     if (!wall) continue;
     const cp = wallPointAt(wall, d.position);
-    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (d.width / 2 + 5) / zoom) return d;
+    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (d.width / 2 + pad) / zoom) return d;
   }
   return null;
 }
 
-export function findWindowAt(p: Point, windows: Win[], walls: Wall[], zoom: number): Win | null {
+export function findWindowAt(p: Point, windows: Win[], walls: Wall[], zoom: number, pad = 5): Win | null {
   for (const w of windows) {
     const wall = walls.find(wl => wl.id === w.wallId);
     if (!wall) continue;
     const cp = wallPointAt(wall, w.position);
-    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (w.width / 2 + 5) / zoom) return w;
+    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (w.width / 2 + pad) / zoom) return w;
   }
   return null;
 }

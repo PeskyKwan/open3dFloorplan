@@ -67,6 +67,7 @@
   let dragOffset: Point = { x: 0, y: 0 };
   let dragStartRotation: number = 0;
   let dragStartFurniturePos: Point | null = null;
+  let selBeforeFirstTouch: string | null = null;
   let dragWasWallSnapped: boolean = false;
   let draggingDoorId: string | null = $state(null);
   let draggingWindowId: string | null = $state(null);
@@ -1982,12 +1983,13 @@
 
   function findDoorAt(p: Point): Door | null {
     if (!currentFloor) return null;
-    return _findDoorAt(p, currentFloor.doors, currentFloor.walls, zoom);
+    // Phones get a much fatter tap target — doors are thin and fingers are not.
+    return _findDoorAt(p, currentFloor.doors, currentFloor.walls, zoom, isPhoneView ? 40 : 5);
   }
 
   function findWindowAt(p: Point): Win | null {
     if (!currentFloor) return null;
-    return _findWindowAt(p, currentFloor.windows, currentFloor.walls, zoom);
+    return _findWindowAt(p, currentFloor.windows, currentFloor.walls, zoom, isPhoneView ? 40 : 5);
   }
 
   function findRoomLabelAt(p: Point): Room | null {
@@ -2033,11 +2035,24 @@
     // Track pointers for multi-touch. Two fingers = pinch-zoom / pan gesture.
     const _pid = (e as PointerEvent).pointerId;
     if (_pid != null) {
+      if ((e as PointerEvent).pointerType === 'touch' && activePointers.size === 0) {
+        // First finger down: remember the selection as it was BEFORE this tap
+        // touched anything, so a two-finger gesture can restore it.
+        selBeforeFirstTouch = currentSelectedId;
+      }
       activePointers.set(_pid, { x: e.clientX, y: e.clientY });
       if (activePointers.size >= 2) {
         // Starting a gesture — cancel any single-finger drag so nothing jumps.
         draggingFurnitureId = null; draggingHandle = null; isPanning = false;
+        draggingDoorId = null; draggingWindowId = null; draggingRoomId = null;
         marqueeStart = null; marqueeEnd = null;
+        // The 1st finger of this pinch probably re-selected whatever it landed on
+        // (a wall, the room…). That was never the user's intent — put the ORIGINAL
+        // selection back so the pinch adjusts the element they had selected.
+        if (currentSelectedId !== selBeforeFirstTouch) {
+          selectedElementId.set(selBeforeFirstTouch);
+          selectedElementIds.set(new Set());
+        }
         const pts = [...activePointers.values()];
         const gdx = pts[0].x - pts[1].x, gdy = pts[0].y - pts[1].y;
         gesture = { dist: Math.hypot(gdx, gdy) || 1, midX: (pts[0].x + pts[1].x) / 2, midY: (pts[0].y + pts[1].y) / 2, zoom, camX, camY };
@@ -2588,6 +2603,7 @@
     const _pid = (e as PointerEvent).pointerId;
     if (_pid != null && activePointers.has(_pid)) activePointers.set(_pid, { x: e.clientX, y: e.clientY });
     if (gesture && activePointers.size >= 2) {
+      if (pinchAdj || twistTargetId) { markDirty(); return; } // two fingers are adjusting the selected element, not the camera
       const pts = [...activePointers.values()];
       const gdx = pts[0].x - pts[1].x, gdy = pts[0].y - pts[1].y;
       const nd = Math.hypot(gdx, gdy) || 1;
@@ -3195,8 +3211,6 @@
       const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
       const cx = (a.clientX + b.clientX) / 2;
       const cy = (a.clientY + b.clientY) / 2;
-      const rect = canvas.getBoundingClientRect();
-      const sx = cx - rect.left, sy = cy - rect.top;
       if (pinchAdj) {
         // Pinch resizes the SELECTED element (canvas zoom is off while adjusting)
         const ratio = dist / (pinchAdj.startDist || dist);
@@ -3210,18 +3224,10 @@
             resizeFurniture(pinchAdj.id, { width: Math.max(10, Math.round(pinchAdj.w * ratio)), depth: Math.max(10, Math.round(pinchAdj.d * ratio)) });
           }
         }
-      } else {
-        // Zoom about the pinch midpoint (same math as onWheel)
-        const newZoom = Math.max(0.1, Math.min(10, zoom * (dist / (pinchState.dist || dist))));
-        const worldX = (sx - width / 2) / zoom + camX;
-        const worldY = (sy - height / 2) / zoom + camY;
-        camX = worldX - (sx - width / 2) / newZoom;
-        camY = worldY - (sy - height / 2) / newZoom;
-        zoom = newZoom;
-        // Two-finger pan: camera follows the midpoint
-        camX -= (cx - pinchState.cx) / newZoom;
-        camY -= (cy - pinchState.cy) / newZoom;
       }
+      // (canvas zoom/pan for a plain two-finger gesture is handled ONCE by the
+      // pointer-event gesture in onMouseMove — it used to also run here, which
+      // double-applied every pinch)
       // Twist → rotate the selected furniture piece
       const angle = Math.atan2(b.clientY - a.clientY, b.clientX - a.clientX) * 180 / Math.PI;
       if (twistTargetId) {
