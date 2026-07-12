@@ -120,7 +120,9 @@
   function deselect() { selectedElementId.set(null); selectedRoomId.set(null); }
 
   // ── tools ──
-  function pick(tool: 'select' | 'wall') { cancelPlacement(); selectedTool.set(tool); closeSheet(); }
+  let toolNow = $state('select');
+  selectedTool.subscribe((t) => { toolNow = t; });
+  function pick(tool: 'select' | 'wall' | 'door' | 'window') { cancelPlacement(); selectedTool.set(tool); closeSheet(); }
   function addStairs() { cancelPlacement(); placingStair.set(true); closeSheet(); }
 
   // Native LiDAR scan when in the app; file import in a browser. Same button either way.
@@ -252,6 +254,15 @@
         </div>
       {/if}
 
+      <!-- Active placing-tool banner -->
+      {#if toolNow === 'door' || toolNow === 'window' || toolNow === 'wall'}
+        <div class="absolute top-2 left-2 right-14 z-30 flex items-center gap-2 bg-[#12233c]/95 rounded-xl px-3 py-2.5">
+          <span class="text-[14px] font-medium text-[#5b9bf6] flex-1">
+            {toolNow === 'door' ? '🚪 撳一下幅牆 — 門就放喺嗰度' : toolNow === 'window' ? '🪟 撳一下幅牆 — 窗就放喺嗰度' : '▭ 撳兩點畫牆,dbl-tap 收筆'}
+          </span>
+          <button onclick={() => { cancelPlacement(); selectedTool.set('select'); }} class="shrink-0 h-9 px-3 rounded-lg bg-[#1c2530] text-slate-200 text-[13px] font-medium active:bg-[#26313d]">取消</button>
+        </div>
+      {/if}
       <!-- Zoom controls (floating) -->
       <div class="absolute top-2 right-2 flex flex-col bg-[#0b0f14]/85 rounded-xl overflow-hidden">
         <button onclick={() => canvasZoom.update((z) => Math.min(10, z * 1.25))} class="w-11 h-11 text-2xl text-slate-200 active:bg-white/10" aria-label="Zoom in">+</button>
@@ -433,6 +444,14 @@
             <button onclick={() => pick('wall')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
               <div class="font-semibold text-base text-white">▭ 畫牆</div>
               <div class="text-[13px] text-slate-500 mt-1">撳兩點畫一幅牆</div>
+            </button>
+            <button onclick={() => pick('door')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="font-semibold text-base text-white">🚪 加門</div>
+              <div class="text-[13px] text-slate-500 mt-1">撳落幅牆度就有門</div>
+            </button>
+            <button onclick={() => pick('window')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="font-semibold text-base text-white">🪟 加窗</div>
+              <div class="text-[13px] text-slate-500 mt-1">撳落幅牆度就有窗</div>
             </button>
             <button onclick={addStairs} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
               <div class="font-semibold text-base text-white">▦ 樓梯</div>
