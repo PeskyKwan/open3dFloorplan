@@ -34,6 +34,8 @@ export interface PlacementOptions {
   wallInset?: number;
   /** What "best" means. Default 'wall' (push against a wall, stay out of the way). */
   strategy?: PlacementStrategy;
+  /** Footprints of furniture that must NOT move — arrange around them. */
+  fixedRects?: Rect[];
 }
 
 export interface PlacementResult {
@@ -372,7 +374,7 @@ export function arrangeRoom(
   }
 
   const wallInset = options.wallInset ?? roomWallInset(room, walls);
-  const placed: Rect[] = [];
+  const placed: Rect[] = [...(options.fixedRects ?? [])];
   const results: ArrangeResult[] = [];
   // Place biggest footprints first — they need the good wall runs.
   const order = [...items].sort((a, b) => b.width * b.depth - a.width * a.depth);
@@ -386,4 +388,62 @@ export function arrangeRoom(
     }
   }
   return results;
+}
+
+
+// ─────────────────────── keep-in-place helpers ───────────────────────
+
+/** Axis-aligned bounding box of a (possibly rotated) furniture footprint. */
+export function itemAabb(position: Point, rotation: number, width: number, depth: number): Rect {
+  const a = ((rotation % 360) + 360) % 360 * Math.PI / 180;
+  const c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a));
+  return { cx: position.x, cy: position.y, w: width * c + depth * s, h: width * s + depth * c };
+}
+
+/** Do two furniture AABBs overlap (with optional padding)? */
+export function aabbsOverlap(a: Rect, b: Rect, pad = 0): boolean {
+  return Math.abs(a.cx - b.cx) < (a.w + b.w) / 2 + pad &&
+         Math.abs(a.cy - b.cy) < (a.h + b.h) / 2 + pad;
+}
+
+/**
+ * Push a piece flush against the NEAREST wall (back to the wall surface) and
+ * face it into the room. Uses the piece's ACTUAL width/depth, not catalog sizes.
+ * Same maths/convention as the canvas drag wall-snap.
+ */
+export function flushToNearestWall(
+  walls: Wall[], pos: Point, width: number, depth: number,
+): { position: Point; rotation: number } | null {
+  const halfDepth = depth / 2;
+  let bestDist = Infinity;
+  let best: { position: Point; rotation: number } | null = null;
+  for (const wall of walls) {
+    const wx = wall.end.x - wall.start.x, wy = wall.end.y - wall.start.y;
+    const wLen = Math.hypot(wx, wy);
+    if (wLen < Math.max(1, width * 0.5)) continue; // wall too short for this piece
+    const ux = wx / wLen, uy = wy / wLen;
+    const nx = -uy, ny = ux;
+    const dx = pos.x - wall.start.x, dy = pos.y - wall.start.y;
+    const along = dx * ux + dy * uy;
+    const perp = dx * nx + dy * ny;
+    if (along < -width / 2 || along > wLen + width / 2) continue;
+    const wallHalfThickness = (wall.thickness ?? 15) / 2;
+    const dist = Math.abs(Math.abs(perp) - wallHalfThickness);
+    if (dist < bestDist) {
+      bestDist = dist;
+      const sign = perp >= 0 ? 1 : -1;
+      const targetPerp = sign * (wallHalfThickness + halfDepth);
+      const clampedAlong = Math.max(width / 2, Math.min(wLen - width / 2, along));
+      const wallAngle = Math.atan2(wy, wx) * 180 / Math.PI;
+      const rot = perp >= 0 ? wallAngle : wallAngle + 180;
+      best = {
+        position: {
+          x: Math.round(wall.start.x + ux * clampedAlong + nx * targetPerp),
+          y: Math.round(wall.start.y + uy * clampedAlong + ny * targetPerp),
+        },
+        rotation: ((rot % 360) + 360) % 360,
+      };
+    }
+  }
+  return best;
 }

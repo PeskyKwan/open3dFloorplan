@@ -249,13 +249,16 @@
    * Snap furniture position so its edge is flush against the nearest wall.
    * Returns adjusted position and rotation, or null if no wall is close enough.
    */
-  function snapFurnitureToWall(pos: Point, catalogId: string, currentRotation: number): { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null {
+  function snapFurnitureToWall(pos: Point, catalogId: string, currentRotation: number, actualW?: number, actualD?: number): { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null {
     if (!currentFloor) return null;
     const cat = getCatalogItem(catalogId);
     if (!cat) return null;
 
+    // Use the piece's ACTUAL dims when known (user may have resized it) — the
+    // catalog defaults left resized furniture floating off / poking into walls.
+    const itemW = actualW ?? cat.width;
     // Furniture half-depth (the "back" dimension that goes against the wall)
-    const halfDepth = cat.depth / 2;
+    const halfDepth = (actualD ?? cat.depth) / 2;
 
     let bestDist = WALL_SNAP_DIST;
     let bestResult: { position: Point; rotation: number; wallId: string; side: 'normal' | 'anti'; wallAngle: number } | null = null;
@@ -277,7 +280,7 @@
       const perp = dx * nx + dy * ny;  // signed distance from wall center-line
 
       // Check if projection falls within wall segment (with some margin)
-      if (along < -cat.width / 2 || along > wLen + cat.width / 2) continue;
+      if (along < -itemW / 2 || along > wLen + itemW / 2) continue;
 
       const wallHalfThickness = wall.thickness / 2;
       // Distance from furniture center to wall surface on the side the furniture is on
@@ -292,7 +295,7 @@
         const sign = perp >= 0 ? 1 : -1;
         // Position: push center so edge is flush with wall surface
         const targetPerp = sign * (wallHalfThickness + halfDepth);
-        const clampedAlong = Math.max(cat.width / 2, Math.min(wLen - cat.width / 2, along));
+        const clampedAlong = Math.max(itemW / 2, Math.min(wLen - itemW / 2, along));
         const newX = wall.start.x + ux * clampedAlong + nx * targetPerp;
         const newY = wall.start.y + uy * clampedAlong + ny * targetPerp;
         // Align rotation: furniture "front" faces away from wall
@@ -2793,7 +2796,7 @@
       if (fi) {
         // Simple mode: NO auto wall-snap/auto-rotate — furniture moves freely (1cm) so it never
         // suddenly flips when you drag near a wall. Wall-snapping only in Advanced mode.
-        const wallSnap = currentSimpleMode ? null : snapFurnitureToWall(basePos, fi.catalogId, fi.rotation);
+        const wallSnap = currentSimpleMode ? null : snapFurnitureToWall(basePos, fi.catalogId, fi.rotation, fi.width, fi.depth);
         if (wallSnap) {
           moveFurniture(draggingFurnitureId, wallSnap.position);
           setFurnitureRotation(draggingFurnitureId, wallSnap.rotation);

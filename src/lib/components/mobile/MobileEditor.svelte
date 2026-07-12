@@ -10,7 +10,7 @@
   } from '$lib/stores/project';
   import { furnitureCatalog, getCatalogItem } from '$lib/utils/furnitureCatalog';
   import type { FurnitureDef } from '$lib/utils/furnitureCatalog';
-  import { arrangeRoom, pointInPolygon, recommendPlacementForRoom } from '$lib/utils/placementRecommender';
+  import { arrangeRoom, pointInPolygon, recommendPlacementForRoom, itemAabb, aabbsOverlap, flushToNearestWall } from '$lib/utils/placementRecommender';
   import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { importRoomPlan, extractRoomJsonFromZip } from '$lib/utils/roomplanImport';
   import { scanAndCreateProject, isNativeScanAvailable } from '$lib/native/roomplanScan';
@@ -89,6 +89,15 @@
   function nudgeW(d: number) { if (selFurniture) setWidth(fw(selFurniture) + d); }
   function nudgeD(d: number) { if (selFurniture) setDepth(fd(selFurniture) + d); }
   function rotate90() { if (selFurniture) setFurnitureRotation(selFurniture.id, ((selFurniture.rotation ?? 0) + 90) % 360); }
+  /** One tap: push the selected piece flush against the nearest wall, facing the room. */
+  function snapSelToWall() {
+    if (!selFurniture || !floor) return;
+    const r = flushToNearestWall(floor.walls, selFurniture.position, fw(selFurniture), fd(selFurniture));
+    if (!r) return;
+    setFurnitureRotation(selFurniture.id, r.rotation);
+    moveFurniture(selFurniture.id, r.position);
+    commitFurnitureMove();
+  }
   function del() { if (selFurniture) { removeFurniture(selFurniture.id); selectedElementId.set(null); } }
   function deselect() { selectedElementId.set(null); selectedRoomId.set(null); }
 
@@ -128,16 +137,34 @@
         if (!buckets.has(target.id)) buckets.set(target.id, []);
         buckets.get(target.id)!.push(f);
       }
-      let moved = 0, failed = 0;
+      let moved = 0, failed = 0, kept = 0;
       for (const room of rs) {
         const fs = buckets.get(room.id) ?? [];
         if (!fs.length) continue;
-        const items = fs.map((f: any) => { const c = getCatalogItem(f.catalogId); return { id: f.id, width: f.width ?? c?.width ?? 100, depth: f.depth ?? c?.depth ?? 80 }; });
-        const res = arrangeRoom(room, floor.walls, floor.doors, items, {});
+        const poly = getRoomPolygon(room, floor.walls);
+        // Decide which pieces are already fine: inside the room and not overlapping
+        // another piece — those DON'T move. Only the problem pieces get re-placed.
+        const withRects = fs.map((f: any) => {
+          const c = getCatalogItem(f.catalogId);
+          const w = f.width ?? c?.width ?? 100, d = f.depth ?? c?.depth ?? 80;
+          return { f, w, d, rect: itemAabb(f.position, f.rotation ?? 0, w, d) };
+        });
+        const good: any[] = [], bad: any[] = [];
+        for (const it of withRects) {
+          const inside = poly.length >= 3 && pointInPolygon(it.f.position, poly);
+          const collides = withRects.some((o) => o !== it && aabbsOverlap(it.rect, o.rect));
+          (inside && !collides ? good : bad).push(it);
+        }
+        kept += good.length;
+        if (!bad.length) continue;
+        const items = bad.map((it: any) => ({ id: it.f.id, width: it.w, depth: it.d }));
+        const res = arrangeRoom(room, floor.walls, floor.doors, items, { fixedRects: good.map((g: any) => g.rect) });
         for (const r of res) { if (r.position) { setFurnitureRotation(r.id, r.rotation); moveFurniture(r.id, r.position); moved++; } else failed++; }
       }
       commitFurnitureMove();
-      arrangeMsg = `✓ 排好 ${moved} 件${failed ? `，${failed} 件冇位` : ''}`;
+      arrangeMsg = moved === 0 && failed === 0
+        ? `✓ ${kept} 件全部擺得好，冇嘢需要郁`
+        : `✓ 執咗 ${moved} 件，${kept} 件原位冇郁${failed ? `，${failed} 件冇位` : ''}（唔啱撳 ↩ 復原）`;
     } finally { arranging = false; }
   }
 
@@ -225,9 +252,6 @@
         <div class="flex items-center gap-2 mb-3">
           <span class="text-lg font-semibold text-white truncate">{catOf(selFurniture)?.name ?? 'Furniture'}</span>
           <div class="ml-auto flex gap-2">
-            <button onclick={rotate90} class="w-11 h-11 rounded-full bg-[#1c2530] text-slate-200 flex items-center justify-center active:bg-[#26313d]" aria-label="Rotate 90">
-              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-            </button>
             <button onclick={del} class="w-11 h-11 rounded-full bg-[#2a1416] text-[#f0787a] flex items-center justify-center active:bg-[#3a1a1c]" aria-label="Delete">
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
             </button>
@@ -235,6 +259,16 @@
               <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
             </button>
           </div>
+        </div>
+        <div class="flex gap-2 mb-3">
+          <button onclick={snapSelToWall} class="flex-1 h-12 rounded-xl bg-[#12233c] active:bg-[#16304f] text-[#5b9bf6] text-[15px] font-semibold flex items-center justify-center gap-1.5">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18"/><path d="M9 12h12"/><path d="M13 8l-4 4 4 4"/></svg>
+            貼牆
+          </button>
+          <button onclick={rotate90} class="flex-1 h-12 rounded-xl bg-[#1c2530] active:bg-[#26313d] text-slate-100 text-[15px] font-semibold flex items-center justify-center gap-1.5">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            轉 90°
+          </button>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
