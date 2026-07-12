@@ -1843,6 +1843,14 @@
 
     // Touch input — registered manually so the handlers are non-passive
     // (Svelte attaches touch listeners passively, which blocks preventDefault)
+    // Test/debug hook: lets e2e suites convert world coords to screen taps.
+    (window as any).__o3d = {
+      worldToScreen: (x: number, y: number) => {
+        const r = canvas.getBoundingClientRect();
+        return { x: r.left + (x - camX) * zoom + width / 2, y: r.top + (y - camY) * zoom + height / 2 };
+      },
+      getView: () => ({ zoom, camX, camY }),
+    };
     canvas.addEventListener('touchstart', onTouchStart, { passive: false });
     canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     canvas.addEventListener('touchend', onTouchEnd, { passive: false });
@@ -1968,7 +1976,7 @@
 
   function findFurnitureAt(p: Point): FurnitureItem | null {
     if (!currentFloor) return null;
-    return _findFurnitureAt(p, currentFloor.furniture);
+    return _findFurnitureAt(p, currentFloor.furniture, isPhoneView ? 6 / zoom : 0);
   }
 
   function findColumnAt(p: Point): Column | null {
@@ -1981,15 +1989,14 @@
     return _findStairAt(p, currentFloor.stairs);
   }
 
-  function findDoorAt(p: Point): Door | null {
+  function findDoorAt(p: Point, pad = 6): Door | null {
     if (!currentFloor) return null;
-    // Phones get a much fatter tap target — doors are thin and fingers are not.
-    return _findDoorAt(p, currentFloor.doors, currentFloor.walls, zoom, isPhoneView ? 40 : 5);
+    return _findDoorAt(p, currentFloor.doors, currentFloor.walls, zoom, pad);
   }
 
-  function findWindowAt(p: Point): Win | null {
+  function findWindowAt(p: Point, pad = 6): Win | null {
     if (!currentFloor) return null;
-    return _findWindowAt(p, currentFloor.windows, currentFloor.walls, zoom, isPhoneView ? 40 : 5);
+    return _findWindowAt(p, currentFloor.windows, currentFloor.walls, zoom, pad);
   }
 
   function findRoomLabelAt(p: Point): Room | null {
@@ -2046,9 +2053,10 @@
         draggingFurnitureId = null; draggingHandle = null; isPanning = false;
         draggingDoorId = null; draggingWindowId = null; draggingRoomId = null;
         marqueeStart = null; marqueeEnd = null;
-        // The 1st finger of this pinch probably re-selected whatever it landed on
-        // (a wall, the room…). That was never the user's intent — put the ORIGINAL
-        // selection back so the pinch adjusts the element they had selected.
+        // The 1st finger of this pinch re-selected whatever it landed on (a wall,
+        // a piece, the room…). That was never the user's intent — a two-finger
+        // gesture only ever adjusts the element that was ALREADY selected, and
+        // plain pinch-zoom must not accidentally grab things under the fingers.
         if (currentSelectedId !== selBeforeFirstTouch) {
           selectedElementId.set(selBeforeFirstTouch);
           selectedElementIds.set(new Set());
@@ -2446,6 +2454,21 @@
           commitFurnitureMove(); // snapshot before drag for undo
           dragOffset = { x: wp.x - ent.position.x, y: wp.y - ent.position.y };
         }
+        return;
+      }
+      // Fat-finger FALLBACK for doors/windows: nothing more specific was hit,
+      // so retry with a generous pad before falling through to walls. Keeping
+      // this AFTER furniture means a table beside a window wins the tap.
+      const doorFb = findDoorAt(wp, isPhoneView ? 36 : 12);
+      if (doorFb) {
+        selectElement(doorFb.id, e.shiftKey);
+        if (!e.shiftKey) draggingDoorId = doorFb.id;
+        return;
+      }
+      const winFb = findWindowAt(wp, isPhoneView ? 36 : 12);
+      if (winFb) {
+        selectElement(winFb.id, e.shiftKey);
+        if (!e.shiftKey) draggingWindowId = winFb.id;
         return;
       }
       const wall = findWallAt(wp);
@@ -3144,6 +3167,12 @@
   // furniture width+depth). While a selected element is being adjusted the
   // pinch does NOT zoom the canvas — deselect first to zoom.
   let pinchAdj: { kind: 'furniture' | 'door' | 'window'; id: string; w: number; d: number; startDist: number; engaged: boolean } | null = null;
+  let gestureUndoOpen = false;
+  /** Open the gesture's undo group just before its FIRST real change, so a
+   *  two-finger tap that adjusts nothing never pollutes the undo stack. */
+  function ensureGestureUndo() {
+    if (!gestureUndoOpen) { beginUndoGroup(); gestureUndoOpen = true; }
+  }
   let singleTouchActive = false;
   let lastTapTime = 0;
   let lastTapX = 0;
@@ -3192,13 +3221,10 @@
           dragStartRotation = twistStartRotation;
           const cat = getCatalogItem(fi.catalogId);
           pinchAdj = { kind: 'furniture', id: fi.id, w: fi.width ?? cat?.width ?? 100, d: fi.depth ?? cat?.depth ?? 80, startDist: pinchState.dist, engaged: false };
-          commitFurnitureMove(); // undo snapshot before the gesture
         } else if (dr) {
           pinchAdj = { kind: 'door', id: dr.id, w: dr.width, d: 0, startDist: pinchState.dist, engaged: false };
-          beginUndoGroup();
         } else if (wn) {
           pinchAdj = { kind: 'window', id: wn.id, w: wn.width, d: 0, startDist: pinchState.dist, engaged: false };
-          beginUndoGroup();
         }
       }
     }
@@ -3216,6 +3242,7 @@
         const ratio = dist / (pinchAdj.startDist || dist);
         if (!pinchAdj.engaged && Math.abs(ratio - 1) > 0.05) pinchAdj.engaged = true;
         if (pinchAdj.engaged) {
+          ensureGestureUndo();
           if (pinchAdj.kind === 'door') {
             updateDoor(pinchAdj.id, { width: Math.max(30, Math.round(pinchAdj.w * ratio)) });
           } else if (pinchAdj.kind === 'window') {
@@ -3237,6 +3264,7 @@
         twistStartRotation += delta; // accumulate the raw twist
         if (!twistEngaged && Math.abs(((twistStartRotation - dragStartRotation) % 360 + 360) % 360) > 4) twistEngaged = true;
         if (twistEngaged) {
+          ensureGestureUndo();
           let rot = ((twistStartRotation % 360) + 360) % 360;
           const nearest45 = Math.round(rot / 45) * 45;
           if (Math.abs(rot - nearest45) <= 6) rot = nearest45 % 360; // magnetic straighten
@@ -3260,10 +3288,8 @@
           if (twistEngaged) resolveFurnitureWallOverlap(twistTargetId, false);
           twistTargetId = null; twistEngaged = false;
         }
-        if (pinchAdj) {
-          if (pinchAdj.kind !== 'furniture') endUndoGroup('resize ' + pinchAdj.kind);
-          pinchAdj = null;
-        }
+        pinchAdj = null;
+        if (gestureUndoOpen) { endUndoGroup('調較'); gestureUndoOpen = false; }
       }
       return;
     }

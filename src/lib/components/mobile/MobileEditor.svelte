@@ -4,7 +4,7 @@
   import {
     currentProject, activeFloor, viewMode, selectedElementId, selectedRoomId,
     simpleMode, addFurniture, updateFurniture, removeFurniture, setFurnitureRotation,
-    moveFurniture, commitFurnitureMove, detectedRoomsStore, canvasCamX, canvasCamY,
+    moveFurniture, commitFurnitureMove, beginUndoGroup, endUndoGroup, detectedRoomsStore, canvasCamX, canvasCamY,
     undo, redo, selectedTool, placingStair, cancelPlacement,
     loadProject, createDefaultProject, canvasZoom, updateWall, removeElement,
     updateDoor, updateWindow,
@@ -132,9 +132,10 @@
     if (!selFurniture || !floor) return;
     const r = flushToNearestWall(floor.walls, selFurniture.position, fw(selFurniture), fd(selFurniture));
     if (!r) return;
+    beginUndoGroup();
     setFurnitureRotation(selFurniture.id, r.rotation);
     moveFurniture(selFurniture.id, r.position);
-    commitFurnitureMove();
+    endUndoGroup('貼牆');
   }
   function del() { if (selFurniture) { removeFurniture(selFurniture.id); selectedElementId.set(null); } }
   function deselect() { selectedElementId.set(null); selectedRoomId.set(null); }
@@ -159,6 +160,7 @@
     const rs = (rooms.length ? rooms : floor.rooms) ?? [];
     if (!rs.length) { arrangeMsg = '未偵測到房間 — 先 import scan'; return; }
     arranging = true;
+    beginUndoGroup();
     try {
       const polys = rs.map((r: any) => ({ r, poly: getRoomPolygon(r, floor.walls) }));
       const buckets = new Map<string, any[]>();
@@ -201,11 +203,10 @@
         const res = arrangeRoom(room, floor.walls, floor.doors, items, { fixedRects: good.map((g: any) => g.rect) });
         for (const r of res) { if (r.position) { setFurnitureRotation(r.id, r.rotation); moveFurniture(r.id, r.position); moved++; } else failed++; }
       }
-      commitFurnitureMove();
       arrangeMsg = moved === 0 && failed === 0
         ? `✓ ${kept} 件全部擺得好，冇嘢需要郁`
         : `✓ 執咗 ${moved} 件，${kept} 件原位冇郁${failed ? `，${failed} 件冇位` : ''}（唔啱撳 ↩ 復原）`;
-    } finally { arranging = false; }
+    } finally { arranging = false; endUndoGroup('一鍵執靚'); }
   }
 
   // ── fit-check ──
@@ -228,9 +229,11 @@
       if (r && (!best || r.score > best.score)) { best = r; bestRoom = room; }
     }
     if (!best) { fitOk = false; fitMsg = `✗ 擺唔落 — 冇位放 ${width}×${depth}cm`; return; }
+    beginUndoGroup();
     const id = addFurniture(fitCatalogId, best.position);
     setFurnitureRotation(id, best.rotation);
     if (Number(fitW) || Number(fitD)) updateFurniture(id, { width, depth });
+    endUndoGroup('試位');
     selectedElementId.set(id);
     fitOk = true;
     fitMsg = `✓ 擺得落！放咗喺 ${bestRoom.name ?? '間房'}`;

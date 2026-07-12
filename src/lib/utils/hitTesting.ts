@@ -47,16 +47,17 @@ export function positionOnWall(p: Point, w: Wall): number {
   return Math.max(0.1, Math.min(0.9, ((p.x - w.start.x) * dx + (p.y - w.start.y) * dy) / len2));
 }
 
-export function findWallAt(p: Point, walls: Wall[], zoom: number): Wall | null {
-  const threshold = 15 / zoom;
+export function findWallAt(p: Point, walls: Wall[], zoom: number, pad = 15): Wall | null {
+  const slop = pad / zoom;
   for (const w of walls) {
     if (w.curvePoint) {
       for (let i = 0; i <= 20; i++) {
         const pt = wallPointAt(w, i / 20);
-        if (Math.hypot(p.x - pt.x, p.y - pt.y) < threshold + w.thickness / 2) return w;
+        if (Math.hypot(p.x - pt.x, p.y - pt.y) < slop + w.thickness / 2) return w;
       }
     } else {
-      if (pointToSegmentDist(p, w.start, w.end) < threshold) return w;
+      // Whole wall thickness is tappable, plus screen slop
+      if (pointToSegmentDist(p, w.start, w.end) < w.thickness / 2 + slop) return w;
     }
   }
   return null;
@@ -100,7 +101,7 @@ export function findHandleAt(
   return null;
 }
 
-export function findFurnitureAt(p: Point, furniture: FurnitureItem[]): FurnitureItem | null {
+export function findFurnitureAt(p: Point, furniture: FurnitureItem[], padWorld = 0): FurnitureItem | null {
   for (const fi of [...furniture].reverse()) {
     const cat = getCatalogItem(fi.catalogId);
     if (!cat) continue;
@@ -109,8 +110,8 @@ export function findFurnitureAt(p: Point, furniture: FurnitureItem[]): Furniture
     const angle = -(fi.rotation * Math.PI) / 180;
     const rx = dx * Math.cos(angle) - dy * Math.sin(angle);
     const ry = dx * Math.sin(angle) + dy * Math.cos(angle);
-    const hw = (fi.width ?? cat.width) * Math.abs(fi.scale?.x ?? 1) / 2;
-    const hd = (fi.depth ?? cat.depth) * Math.abs(fi.scale?.y ?? 1) / 2;
+    const hw = (fi.width ?? cat.width) * Math.abs(fi.scale?.x ?? 1) / 2 + padWorld;
+    const hd = (fi.depth ?? cat.depth) * Math.abs(fi.scale?.y ?? 1) / 2 + padWorld;
     if (Math.abs(rx) < hw && Math.abs(ry) < hd) return fi;
   }
   return null;
@@ -147,11 +148,14 @@ export function findStairAt(p: Point, stairs: Stair[] | undefined): Stair | null
 }
 
 export function findDoorAt(p: Point, doors: Door[], walls: Wall[], zoom: number, pad = 5): Door | null {
+  // width/2 is WORLD cm (the door itself); pad is SCREEN px converted to world.
+  // The old formula divided the whole thing by zoom, so zoomed-out doors had a
+  // multi-metre grab radius that stole taps meant for nearby furniture.
   for (const d of doors) {
     const wall = walls.find(w => w.id === d.wallId);
     if (!wall) continue;
     const cp = wallPointAt(wall, d.position);
-    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (d.width / 2 + pad) / zoom) return d;
+    if (Math.hypot(p.x - cp.x, p.y - cp.y) < d.width / 2 + pad / zoom) return d;
   }
   return null;
 }
@@ -161,7 +165,7 @@ export function findWindowAt(p: Point, windows: Win[], walls: Wall[], zoom: numb
     const wall = walls.find(wl => wl.id === w.wallId);
     if (!wall) continue;
     const cp = wallPointAt(wall, w.position);
-    if (Math.hypot(p.x - cp.x, p.y - cp.y) < (w.width / 2 + pad) / zoom) return w;
+    if (Math.hypot(p.x - cp.x, p.y - cp.y) < w.width / 2 + pad / zoom) return w;
   }
   return null;
 }
