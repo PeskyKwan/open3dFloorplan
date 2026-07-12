@@ -19,6 +19,9 @@
   let showTemplateModal = $state(false);
 
   onMount(async () => {
+    // Startup diagnostics — visible in the native console so plugin registration
+    // can be verified without touching the phone.
+    console.log('[o3d] nativeApp=' + isNativeApp() + ' roomPlanPlugin=' + isNativeScanAvailable());
     projects = await localStore.list();
     // Sort by most recent
     projects.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
@@ -133,7 +136,7 @@
             class="px-4 py-2.5 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold text-sm shadow-lg shadow-emerald-500/25 transition-all flex items-center gap-2"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-            {isNativeScanAvailable() ? '掃描 Scan' : 'Import 掃描'}
+            {isNativeScanAvailable() ? '掃描 Scan' : '匯入掃描檔'}
           </button>
           <button
             onclick={newProject}
@@ -151,7 +154,7 @@
           class="flex-[3] h-14 bg-emerald-500 text-white rounded-2xl active:bg-emerald-600 font-bold text-[17px] shadow-lg shadow-emerald-500/25 flex items-center justify-center gap-2.5"
         >
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-          {isNativeScanAvailable() ? '掃描房間' : 'Import 掃描'}
+          {isNativeScanAvailable() ? '掃描房間' : '匯入掃描檔'}
         </button>
         <button
           onclick={newProject}
@@ -171,7 +174,7 @@
           <span class="w-28 h-28 rounded-full bg-gradient-to-b from-emerald-400 to-emerald-600 shadow-2xl shadow-emerald-500/40 flex items-center justify-center">
             <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
           </span>
-          <span class="text-2xl font-bold text-gray-800">{isNativeScanAvailable() ? '掃描房間' : 'Import 掃描'}</span>
+          <span class="text-2xl font-bold text-gray-800">{isNativeScanAvailable() ? '掃描房間' : '匯入掃描檔'}</span>
         </button>
         <p class="text-[15px] text-gray-400 mt-3 px-8">{isNativeScanAvailable() ? '拎住部機喺房行一圈,自動出平面圖' : '匯入 RoomPlan 掃描檔開始'}</p>
         <div class="mt-8 flex items-center gap-3 justify-center">

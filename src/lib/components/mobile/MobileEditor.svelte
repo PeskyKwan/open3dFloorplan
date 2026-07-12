@@ -374,8 +374,8 @@
               <div class="text-[13px] text-slate-500 mt-1">撳畫面放樓梯</div>
             </button>
             <button onclick={importScan} class="p-4 rounded-2xl bg-[#12233c] active:bg-[#16304f] text-left">
-              <div class="font-semibold text-base text-[#5b9bf6]">◎ {isNativeScanAvailable() ? '掃描' : 'Import 掃描'}</div>
-              <div class="text-[13px] text-[#5b9bf6]/70 mt-1">{isNativeScanAvailable() ? 'LiDAR 掃間房' : '匯入 .json/.zip'}</div>
+              <div class="font-semibold text-base text-[#5b9bf6]">◎ {isNativeScanAvailable() ? '掃描房間' : '匯入掃描檔'}</div>
+              <div class="text-[13px] text-[#5b9bf6]/70 mt-1">{isNativeScanAvailable() ? 'LiDAR 掃間房' : '匯入 .json / .zip 掃描檔'}</div>
             </button>
           </div>
           <div class="space-y-2">
