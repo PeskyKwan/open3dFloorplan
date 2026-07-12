@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup } from '$lib/models/types';
+import type { Project, Floor, Wall, Door, Window as Win, FurnitureItem, Point, Stair, Column, BackgroundImage, GuideLine, ElementGroup, EntourageItem } from '$lib/models/types';
 
 
 function uid(): string {
@@ -80,6 +80,27 @@ function syncHistoryStore() {
 /** Current undo action description — set before calling mutate/snapshot */
 let _nextDescription = '';
 
+// Undo coalescing: rapid consecutive edits to the same field (e.g. typing digits
+// into a dimension input, which fires `oninput` per keystroke) should collapse into
+// a single undo entry instead of one per keystroke. The first edit pushes the
+// pre-edit baseline; subsequent edits sharing the same key within the time window
+// reuse it rather than pushing a fresh snapshot.
+let _lastCoalesceKey: string | null = null;
+let _lastSnapshotTime = 0;
+const COALESCE_WINDOW_MS = 800;
+
+/** Break any active coalescing chain so the next edit starts a fresh undo entry. */
+function resetCoalescing() {
+  _lastCoalesceKey = null;
+}
+
+/** Build a coalesce key for an element edit from its type, id, and the fields changed.
+ *  Rapid edits to the same element+fields collapse into one undo entry; changing which
+ *  fields are edited (or which element) starts a new entry. */
+function coalesceKeyFor(type: string, id: string, updates: Record<string, unknown>): string {
+  return `${type}:${id}:${Object.keys(updates).sort().join(',')}`;
+}
+
 // Undo grouping: batch multiple mutations into a single undo entry
 let undoGroupSnapshot: string | null = null;
 let undoGroupDepth = 0;
@@ -103,18 +124,35 @@ export function endUndoGroup(description?: string) {
     redoStack.length = 0;
     undoGroupSnapshot = null;
     _nextDescription = '';
+    resetCoalescing();
     syncHistoryStore();
   }
 }
 
-function snapshot(description?: string) {
+function snapshot(description?: string, coalesceKey?: string) {
   // If inside an undo group, skip — the group handles the snapshot
   if (undoGroupDepth > 0) return;
   const p = get(currentProject);
-  if (p) undoStack.push({ state: JSON.stringify(p), description: description || _nextDescription || 'Edit', timestamp: Date.now() });
+  if (!p) return;
+  const now = Date.now();
+  // Coalesce rapid consecutive edits to the same field: the top-of-stack entry
+  // already holds the correct pre-edit baseline, so don't push another snapshot.
+  if (
+    coalesceKey &&
+    coalesceKey === _lastCoalesceKey &&
+    now - _lastSnapshotTime < COALESCE_WINDOW_MS &&
+    undoStack.length > 0
+  ) {
+    _lastSnapshotTime = now;
+    redoStack.length = 0;
+    return;
+  }
+  undoStack.push({ state: JSON.stringify(p), description: description || _nextDescription || 'Edit', timestamp: now });
   if (undoStack.length > 50) undoStack.shift();
   redoStack.length = 0;
   _nextDescription = '';
+  _lastCoalesceKey = coalesceKey ?? null;
+  _lastSnapshotTime = now;
   syncHistoryStore();
 }
 
@@ -125,6 +163,7 @@ function reviveDates(p: Project): Project {
 }
 
 export function undo() {
+  resetCoalescing();
   const prev = undoStack.pop();
   if (!prev) return;
   const cur = get(currentProject);
@@ -134,6 +173,7 @@ export function undo() {
 }
 
 export function redo() {
+  resetCoalescing();
   const next = redoStack.pop();
   if (!next) return;
   const cur = get(currentProject);
@@ -144,6 +184,7 @@ export function redo() {
 
 /** Jump to a specific undo history step by index (0 = oldest) */
 export function jumpToUndoStep(targetIndex: number) {
+  resetCoalescing();
   const total = undoStack.length; // total past states; current state is at index `total`
   if (targetIndex < 0 || targetIndex > total) return;
   if (targetIndex === total) return; // already at current state
@@ -166,10 +207,10 @@ export function jumpToUndoStep(targetIndex: number) {
   syncHistoryStore();
 }
 
-function mutate(fn: (floor: Floor) => void, description?: string) {
+function mutate(fn: (floor: Floor) => void, description?: string, coalesceKey?: string) {
   const p = get(currentProject);
   if (!p) return;
-  snapshot(description);
+  snapshot(description, coalesceKey);
   const floor = p.floors.find((f) => f.id === p.activeFloorId);
   if (!floor) return;
   fn(floor);
@@ -204,6 +245,8 @@ export function addDoor(wallId: string, position: number, doorType: Door['type']
     french: { width: 150, height: 210 },
     pocket: { width: 90, height: 210 },
     bifold: { width: 180, height: 210 },
+    opening: { width: 100, height: 210 },
+    garage: { width: 240, height: 210 },
   };
   const { width, height } = defaults[doorType];
   mutate((f) => {
@@ -323,7 +366,7 @@ export function updateStair(id: string, updates: Partial<Stair>) {
     if (!f.stairs) return;
     const s = f.stairs.find((s) => s.id === id);
     if (s) Object.assign(s, updates);
-  });
+  }, undefined, coalesceKeyFor('stair', id, updates));
 }
 
 export function removeStair(id: string) {
@@ -374,7 +417,7 @@ export function updateColumn(id: string, updates: Partial<Column>) {
     if (!f.columns) return;
     const c = f.columns.find((c) => c.id === id);
     if (c) Object.assign(c, updates);
-  });
+  }, undefined, coalesceKeyFor('column', id, updates));
 }
 
 export function removeColumn(id: string) {
@@ -404,6 +447,64 @@ export const placingColumnShape = writable<'round' | 'square'>('round');
 /** Tool for placing stairs */
 export const placingStair = writable<boolean>(false);
 
+// --- Entourage (2D presentation symbols) ---
+export const placingEntourageId = writable<string | null>(null);
+
+export function addEntourageItem(defId: string, position: Point, width: number): string {
+  const id = uid();
+  mutate((f) => {
+    if (!f.entourage) f.entourage = [];
+    f.entourage.push({ id, defId, position, width, rotation: 0 });
+  }, 'Added entourage');
+  return id;
+}
+
+/** Move an entourage item without snapshotting (used during drag). */
+export function moveEntourage(id: string, position: Point) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  const item = floor?.entourage?.find((e) => e.id === id);
+  if (item) {
+    item.position = position;
+    p.updatedAt = new Date();
+    currentProject.set({ ...p });
+  }
+}
+
+/** Resize an entourage item without snapshotting (used during handle drag). */
+export function resizeEntourage(id: string, width: number) {
+  const p = get(currentProject);
+  if (!p) return;
+  const floor = p.floors.find((f) => f.id === p.activeFloorId);
+  const item = floor?.entourage?.find((e) => e.id === id);
+  if (item) {
+    item.width = width;
+    p.updatedAt = new Date();
+    currentProject.set({ ...p });
+  }
+}
+
+export function updateEntourageItem(id: string, updates: Partial<EntourageItem>) {
+  mutate((f) => {
+    const e = f.entourage?.find((e) => e.id === id);
+    if (e) Object.assign(e, updates);
+  }, undefined, coalesceKeyFor('entourage', id, updates));
+}
+
+/** Register an uploaded PNG as a reusable project-level entourage symbol. */
+export function addCustomEntourage(name: string, dataUrl: string, aspect: number): string {
+  const p = get(currentProject);
+  if (!p) return '';
+  snapshot('Added custom entourage');
+  if (!p.customEntourage) p.customEntourage = [];
+  const id = uid();
+  p.customEntourage.push({ id, name, dataUrl, aspect });
+  p.updatedAt = new Date();
+  currentProject.set({ ...p });
+  return id;
+}
+
 /** Scale calibration mode */
 export const calibrationMode = writable<boolean>(false);
 export const calibrationPoints = writable<Point[]>([]);
@@ -424,6 +525,7 @@ export function removeElement(id: string) {
     if (f.stairs) f.stairs = f.stairs.filter((s) => s.id !== id);
     if (f.columns) f.columns = f.columns.filter((c) => c.id !== id);
     if (f.textAnnotations) f.textAnnotations = f.textAnnotations.filter((t) => t.id !== id);
+    if (f.entourage) f.entourage = f.entourage.filter((e) => e.id !== id);
   }, 'Deleted element');
 }
 
@@ -445,28 +547,28 @@ export function updateWall(id: string, updates: Partial<Wall>) {
   mutate((f) => {
     const w = f.walls.find((w) => w.id === id);
     if (w) Object.assign(w, updates);
-  });
+  }, undefined, coalesceKeyFor('wall', id, updates));
 }
 
 export function updateDoor(id: string, updates: Partial<Door>) {
   mutate((f) => {
     const d = f.doors.find((d) => d.id === id);
     if (d) Object.assign(d, updates);
-  });
+  }, undefined, coalesceKeyFor('door', id, updates));
 }
 
 export function updateWindow(id: string, updates: Partial<Win>) {
   mutate((f) => {
     const w = f.windows.find((w) => w.id === id);
     if (w) Object.assign(w, updates);
-  });
+  }, undefined, coalesceKeyFor('window', id, updates));
 }
 
 export function updateFurniture(id: string, updates: Partial<FurnitureItem>) {
   mutate((f) => {
     const fi = f.furniture.find((fi) => fi.id === id);
     if (fi) Object.assign(fi, updates);
-  });
+  }, undefined, coalesceKeyFor('furniture', id, updates));
 }
 
 export function updateRoom(id: string, updates: Partial<{ name: string; floorTexture: string; color: string; roomType: import('$lib/models/types').RoomCategory; labelOffset: import('$lib/models/types').Point | undefined }>) {
@@ -482,7 +584,7 @@ export function updateRoom(id: string, updates: Partial<{ name: string; floorTex
         f.rooms.push(newRoom);
       }
     }
-  });
+  }, undefined, coalesceKeyFor('room', id, updates));
 }
 
 export function addFloor(name?: string, copyCurrentLayout = false) {
@@ -535,6 +637,7 @@ export function updateProjectName(name: string) {
 export function loadProject(project: Project) {
   undoStack.length = 0;
   redoStack.length = 0;
+  resetCoalescing();
   currentProject.set(project);
   syncHistoryStore();
 }
@@ -575,6 +678,7 @@ export const placingWindowType = writable<import('$lib/models/types').Window['ty
 export function cancelPlacement() {
   selectedTool.set('select');
   placingFurnitureId.set(null);
+  placingEntourageId.set(null);
   placingRotation.set(0);
   placingStair.set(false);
   placingColumn.set(false);
@@ -788,7 +892,7 @@ export function updateAnnotation(id: string, updates: Partial<{ x1: number; y1: 
     const a = f.annotations.find(a => a.id === id);
     if (!a) return;
     Object.assign(a, updates);
-  });
+  }, undefined, coalesceKeyFor('annotation', id, updates));
 }
 
 // --- Text Annotations ---
@@ -814,7 +918,7 @@ export function updateTextAnnotation(id: string, updates: Partial<{ x: number; y
     const t = f.textAnnotations.find(t => t.id === id);
     if (!t) return;
     Object.assign(t, updates);
-  });
+  }, undefined, coalesceKeyFor('textAnnotation', id, updates));
 }
 
 export function moveTextAnnotation(id: string, position: { x: number; y: number }) {
@@ -831,8 +935,8 @@ export function moveTextAnnotation(id: string, position: { x: number; y: number 
 }
 
 // Layer visibility store (used by LayersPanel and FloorPlanCanvas)
-export const layerVisibility = writable<{ walls: boolean; doors: boolean; windows: boolean; furniture: boolean; stairs: boolean; columns: boolean; guides: boolean; measurements: boolean; annotations: boolean }>({
-  walls: true, doors: true, windows: true, furniture: true, stairs: true, columns: true, guides: true, measurements: true, annotations: true,
+export const layerVisibility = writable<{ walls: boolean; doors: boolean; windows: boolean; furniture: boolean; stairs: boolean; columns: boolean; guides: boolean; measurements: boolean; annotations: boolean; entourage: boolean }>({
+  walls: true, doors: true, windows: true, furniture: true, stairs: true, columns: true, guides: true, measurements: true, annotations: true, entourage: true,
 });
 
 // --- Lock ---

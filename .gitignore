@@ -12,6 +12,10 @@ node_modules
 .DS_Store
 Thumbs.db
 
+# Claude Code (personal)
+.claude/
+.vscode/
+
 # Env
 .env
 .env.*

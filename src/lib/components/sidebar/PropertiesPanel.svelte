@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, moveFurniture, commitFurnitureMove, setFurnitureRotation } from '$lib/stores/project';
+  import { activeFloor, selectedElementId, selectedRoomId, updateWall, updateDoor, updateWindow, updateRoom, updateFurniture, detectedRoomsStore, updateStair, updateColumn, updateBackgroundImage, setBackgroundImage, calibrationMode, calibrationPoints, updateTextAnnotation, toggleFurnitureLock, moveFurniture, commitFurnitureMove, setFurnitureRotation, updateEntourageItem, removeElement } from '$lib/stores/project';
+  import { getEntourageDef } from '$lib/utils/entourageCatalog';
   import { floorMaterials, wallColors } from '$lib/utils/materials';
   import { getCatalogItem } from '$lib/utils/furnitureCatalog';
   import { recommendPlacementForRoom } from '$lib/utils/placementRecommender';
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
+  import { base } from '$app/paths';
   import type { Floor, Wall, Door, Window as Win, Room, FurnitureItem, Stair, Column, RoomCategory, TextAnnotation } from '$lib/models/types';
 
   let floor = $state<Floor | null>(null);
@@ -80,6 +82,7 @@
   let selectedStair = $derived(floor?.stairs?.find(s => s.id === selId) ?? null);
   let selectedColumn = $derived(floor?.columns?.find(c => c.id === selId) ?? null);
   let selectedTextAnnotation = $derived(floor?.textAnnotations?.find(t => t.id === selId) ?? null);
+  let selectedEntourage = $derived(floor?.entourage?.find(en => en.id === selId) ?? null);
   let hasBgImage = $derived(!!floor?.backgroundImage);
   let selectedRoom = $derived(floor?.rooms?.find(r => r.id === selRoomId) ?? detectedRooms.find(r => r.id === selRoomId) ?? null);
 
@@ -335,26 +338,33 @@
   });
 
   const floorTexPaths: Record<string, string> = {
-    'light-oak': '/textures/floor-light-oak.jpg', 'walnut': '/textures/floor-walnut.jpg',
-    'bamboo': '/textures/floor-bamboo.jpg', 'laminate': '/textures/floor-laminate.jpg',
-    'ceramic-white': '/textures/floor-tile-white.jpg', 'ceramic-gray': '/textures/floor-tile-gray.jpg',
-    'porcelain': '/textures/floor-porcelain.jpg',
-    'marble-white': '/textures/floor-marble-white.jpg', 'marble-dark': '/textures/floor-marble-dark.jpg',
-    'carpet-beige': '/textures/floor-carpet-beige.jpg', 'carpet-gray': '/textures/floor-carpet-gray.jpg',
-    'concrete': '/textures/floor-concrete.jpg', 'slate': '/textures/floor-slate.jpg',
-    'vinyl': '/textures/floor-vinyl.jpg',
+    'light-oak': `${base}/textures/floor-light-oak.jpg`, 'walnut': `${base}/textures/floor-walnut.jpg`,
+    'bamboo': `${base}/textures/floor-bamboo.jpg`, 'laminate': `${base}/textures/floor-laminate.jpg`,
+    'ceramic-white': `${base}/textures/floor-tile-white.jpg`, 'ceramic-gray': `${base}/textures/floor-tile-gray.jpg`,
+    'porcelain': `${base}/textures/floor-porcelain.jpg`,
+    'marble-white': `${base}/textures/floor-marble-white.jpg`, 'marble-dark': `${base}/textures/floor-marble-dark.jpg`,
+    'carpet-beige': `${base}/textures/floor-carpet-beige.jpg`, 'carpet-gray': `${base}/textures/floor-carpet-gray.jpg`,
+    'concrete': `${base}/textures/floor-concrete.jpg`, 'slate': `${base}/textures/floor-slate.jpg`,
+    'vinyl': `${base}/textures/floor-vinyl.jpg`,
+  };
+  const wallTexPaths: Record<string, string> = {
+    'red-brick': `${base}/textures/brick.jpg`, 'exposed-brick': `${base}/textures/exposed-brick.jpg`,
+    'stone': `${base}/textures/stone.jpg`, 'wood-panel': `${base}/textures/wood-panel.jpg`,
+    'concrete-block': `${base}/textures/concrete.jpg`, 'subway-tile': `${base}/textures/subway-tile.jpg`,
   };
   const textureGroups = [
+    { label: '🎨 Plain', ids: ['none'] },
     { label: '🪵 Wood', ids: ['light-oak', 'walnut', 'bamboo', 'laminate'] },
     { label: '🔲 Tile', ids: ['ceramic-white', 'ceramic-gray', 'porcelain', 'vinyl'] },
     { label: '🪨 Stone', ids: ['marble-white', 'marble-dark', 'concrete', 'slate'] },
     { label: '🧶 Carpet', ids: ['carpet-beige', 'carpet-gray'] },
   ];
 
-  let hasSelection = $derived(!!selectedWall || !!selectedDoor || !!selectedWindow || !!selectedFurniture || !!selectedRoom || !!selectedStair || !!selectedColumn || !!selectedTextAnnotation || (!is3D && hasBgImage));
+  let hasSelection = $derived(!!selectedWall || !!selectedDoor || !!selectedWindow || !!selectedFurniture || !!selectedRoom || !!selectedStair || !!selectedColumn || !!selectedTextAnnotation || !!selectedEntourage || (!is3D && hasBgImage));
 </script>
 
-<div class="{is3D ? 'w-80' : 'w-64'} shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-y-auto p-3 fixed right-0 z-40 shadow-lg" class:hidden={!hasSelection} style="top: 48px; bottom: 36px;">
+<!-- Right sidebar on md+; slides up as a bottom sheet on phones -->
+<div class="{is3D ? 'w-80' : 'w-64'} shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-y-auto p-3 fixed right-0 top-12 bottom-9 z-40 shadow-lg max-md:top-auto max-md:bottom-0 max-md:left-0 max-md:w-full max-md:max-h-[45vh] max-md:border-l-0 max-md:border-t max-md:rounded-t-xl max-md:shadow-2xl" class:hidden={!hasSelection}>
   {#if selectedWall}
     <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
       <span class="w-6 h-6 bg-gray-200 rounded flex items-center justify-center text-xs">▭</span>
@@ -434,7 +444,7 @@
                 onclick={() => { if (selectedWall) updateWall(selectedWall.id, { interiorTexture: 'none' }); }}
               >None</button>
               {#each wallColors.filter(wc => wc.texture) as wc}
-                {@const texPath = ({ 'red-brick': '/textures/brick.jpg', 'exposed-brick': '/textures/exposed-brick.jpg', 'stone': '/textures/stone.jpg', 'wood-panel': '/textures/wood-panel.jpg', 'concrete-block': '/textures/concrete.jpg', 'subway-tile': '/textures/subway-tile.jpg' })[wc.id] ?? ''}
+                {@const texPath = wallTexPaths[wc.id] ?? ''}
                 <button
                   class="rounded-md border-2 text-[10px] text-center h-14 flex flex-col items-center justify-end overflow-hidden relative {sideTex === wc.id ? 'border-blue-500 ring-1 ring-blue-200' : 'border-gray-200 hover:border-gray-300'}"
                   style={texPath ? `background-image: url(${texPath}); background-size: cover; background-position: center;` : `background-color: ${wc.color}20`}
@@ -469,7 +479,7 @@
                 onclick={() => { if (selectedWall) updateWall(selectedWall.id, { exteriorTexture: 'none' }); }}
               >None</button>
               {#each wallColors.filter(wc => wc.texture) as wc}
-                {@const texPath = ({ 'red-brick': '/textures/brick.jpg', 'exposed-brick': '/textures/exposed-brick.jpg', 'stone': '/textures/stone.jpg', 'wood-panel': '/textures/wood-panel.jpg', 'concrete-block': '/textures/concrete.jpg', 'subway-tile': '/textures/subway-tile.jpg' })[wc.id] ?? ''}
+                {@const texPath = wallTexPaths[wc.id] ?? ''}
                 <button
                   class="rounded-md border-2 text-[10px] text-center h-14 flex flex-col items-center justify-end overflow-hidden relative {sideTex === wc.id ? 'border-blue-500 ring-1 ring-blue-200' : 'border-gray-200 hover:border-gray-300'}"
                   style={texPath ? `background-image: url(${texPath}); background-size: cover; background-position: center;` : `background-color: ${wc.color}20`}
@@ -513,8 +523,11 @@
           <option value="french">French</option>
           <option value="pocket">Pocket</option>
           <option value="bifold">Bifold</option>
+          <option value="opening">Doorway (no door)</option>
+          <option value="garage">Garage</option>
         </select>
       </label>
+      {#if selectedDoor.type !== 'opening' && selectedDoor.type !== 'garage'}
       <label class="block">
         <span class="text-xs text-gray-500">Hinge Side</span>
         <div class="flex gap-2">
@@ -529,6 +542,7 @@
           <button onclick={() => { if (selectedDoor) updateDoor(selectedDoor.id, { flipSide: true }); }} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedDoor?.flipSide ? 'bg-blue-100 border-blue-400 text-blue-700' : 'border-gray-200 hover:bg-gray-50'}">Outward</button>
         </div>
       </label>
+      {/if}
     </div>
 
   {:else if selectedWindow}
@@ -751,7 +765,7 @@
       </div>
       <!-- Room Color -->
       <div>
-        <span class="text-xs text-gray-500 mb-1.5 block">Room Color</span>
+        <span class="text-xs text-gray-500 mb-1.5 block">Room Color{selectedRoom.floorTexture === 'none' ? ' (used as floor color)' : ''}</span>
         <div class="grid grid-cols-5 gap-1.5 mb-2">
           {#each roomColorPresets as preset}
             <button
@@ -791,7 +805,7 @@
                     >
                       <div
                         class="w-full h-12 rounded-md mb-1 overflow-hidden"
-                        style={texPath ? `background-image: url(${texPath}); background-size: cover; background-position: center;` : `background-color: ${mat.color}`}
+                        style={texPath ? `background-image: url(${texPath}); background-size: cover; background-position: center;` : `background-color: ${mat.id === 'none' ? (selectedRoom.color ?? mat.color) : mat.color}`}
                       ></div>
                       <div class="text-center leading-3 text-[10px] text-gray-600 truncate">{mat.name}</div>
                     </button>
@@ -801,6 +815,34 @@
             </div>
           {/each}
         </div>
+      </div>
+    </div>
+
+  {:else if selectedEntourage}
+    <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+      <span class="w-6 h-6 bg-green-100 rounded flex items-center justify-center text-xs">🌳</span>
+      Entourage
+    </h3>
+    <div class="space-y-3">
+      <div>
+        <span class="text-xs text-gray-500">Symbol</span>
+        <p class="text-sm text-gray-700">{getEntourageDef(selectedEntourage.defId)?.name ?? 'Custom image'}</p>
+      </div>
+      <label class="block">
+        <span class="text-xs text-gray-500">Width ({unitLabel()})</span>
+        <input type="number" value={displayValue(Math.round(selectedEntourage.width))} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { width: Math.max(1, inputToCm(Number((e.target as HTMLInputElement).value)) || 1) }); }} min="1" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+      </label>
+      <label class="block">
+        <span class="text-xs text-gray-500">Rotation (°)</span>
+        <input type="number" value={Math.round(selectedEntourage.rotation || 0)} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { rotation: Number((e.target as HTMLInputElement).value) || 0 }); }} step="15" class="w-full px-2 py-1 border border-gray-200 rounded text-sm" />
+      </label>
+      <label class="block">
+        <span class="text-xs text-gray-500">Opacity ({Math.round((selectedEntourage.opacity ?? 1) * 100)}%)</span>
+        <input type="range" min="0.1" max="1" step="0.05" value={selectedEntourage.opacity ?? 1} oninput={(e) => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { opacity: Number((e.target as HTMLInputElement).value) }); }} class="w-full" />
+      </label>
+      <div class="flex gap-2">
+        <button onclick={() => { if (selectedEntourage) updateEntourageItem(selectedEntourage.id, { locked: !selectedEntourage.locked }); }} class="flex-1 px-2 py-1.5 border rounded text-sm transition-colors {selectedEntourage.locked ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-200 hover:bg-gray-50'}">{selectedEntourage.locked ? '🔒 Locked' : '🔓 Unlocked'}</button>
+        <button onclick={() => { if (selectedEntourage) { removeElement(selectedEntourage.id); selectedElementId.set(null); } }} class="flex-1 px-2 py-1.5 border border-red-200 text-red-600 rounded text-sm hover:bg-red-50 transition-colors">Delete</button>
       </div>
     </div>
 

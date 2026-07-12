@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, cancelPlacement, discardTopUndoIfUnchanged, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, simpleMode } from '$lib/stores/project';
-  import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation } from '$lib/models/types';
+  import { activeFloor, selectedTool, selectedElementId, selectedElementIds, selectedRoomId, addWall, addDoor, addWindow, updateWall, moveWallEndpoint, updateDoor, updateWindow, addFurniture, moveFurniture, commitFurnitureMove, rotateFurniture, setFurnitureRotation, scaleFurniture, resizeFurniture, cancelPlacement, discardTopUndoIfUnchanged, removeElement, placingFurnitureId, placingRotation, placingDoorType, placingWindowType, detectedRoomsStore, duplicateDoor, duplicateWindow, duplicateFurniture, duplicateWall, moveWallParallel, splitWall, snapEnabled, placingStair, addStair, moveStair, updateStair, placingColumn, placingColumnShape, addColumn, moveColumn, updateColumn, calibrationMode, calibrationPoints, updateBackgroundImage, setBackgroundImage, canvasZoom, canvasCamX, canvasCamY, panMode, showFurnitureStore, addGuide, moveGuide, removeGuide, beginUndoGroup, endUndoGroup, layerVisibility, updateRoom, addMeasurement, removeMeasurement, addAnnotation, removeAnnotation, updateAnnotation, addTextAnnotation, removeTextAnnotation, updateTextAnnotation, moveTextAnnotation, toggleFurnitureLock, createGroup, ungroupElements, findGroupForElement, simpleMode, placingEntourageId, addEntourageItem, moveEntourage, resizeEntourage, currentProject } from '$lib/stores/project';
+  import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, GuideLine, Measurement, Annotation, TextAnnotation, CustomEntourageDef } from '$lib/models/types';
   import type { Floor, Room } from '$lib/models/types';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
@@ -15,8 +15,9 @@
   import { projectSettings, formatLength, formatArea } from '$lib/stores/settings';
   import type { ProjectSettings } from '$lib/stores/settings';
   import type { CanvasState } from '$lib/utils/canvasInteraction';
-  import { drawWall as _drawWall, drawDoorOnWall as _drawDoorOnWall, drawWindowOnWall as _drawWindowOnWall, drawDoorDistanceDimensions as _drawDoorDistanceDimensions, drawWindowDistanceDimensions as _drawWindowDistanceDimensions, drawFurnitureItem, drawStair as _drawStair, drawColumn as _drawColumn, drawGuides as _drawGuides, drawPersistedMeasurements as _drawPersistedMeasurements, drawTextAnnotations as _drawTextAnnotations, drawAnnotation as _drawAnnotation, drawAnnotations as _drawAnnotations, drawRooms as _drawRooms, drawWallJoints as _drawWallJoints, drawSnapPoints as _drawSnapPoints, drawMinimap as _drawMinimap } from '$lib/utils/canvasRenderer';
-  import { pointInPolygon, positionOnWall, findWallAt as _findWallAt, findHandleAt as _findHandleAt, findFurnitureAt as _findFurnitureAt, findColumnAt as _findColumnAt, findStairAt as _findStairAt, findDoorAt as _findDoorAt, findWindowAt as _findWindowAt, findRoomAt as _findRoomAt, hitTestMeasurement as _hitTestMeasurement, hitTestAnnotation as _hitTestAnnotation, hitTestTextAnnotation as _hitTestTextAnnotation } from '$lib/utils/hitTesting';
+  import { drawWall as _drawWall, drawDoorOnWall as _drawDoorOnWall, drawWindowOnWall as _drawWindowOnWall, drawDoorDistanceDimensions as _drawDoorDistanceDimensions, drawWindowDistanceDimensions as _drawWindowDistanceDimensions, drawFurnitureItem, drawStair as _drawStair, drawColumn as _drawColumn, drawGuides as _drawGuides, drawPersistedMeasurements as _drawPersistedMeasurements, drawTextAnnotations as _drawTextAnnotations, drawAnnotation as _drawAnnotation, drawAnnotations as _drawAnnotations, drawRooms as _drawRooms, drawWallJoints as _drawWallJoints, drawSnapPoints as _drawSnapPoints, drawMinimap as _drawMinimap, drawEntourageItems as _drawEntourageItems, drawEntourageGhost as _drawEntourageGhost, entourageAspect } from '$lib/utils/canvasRenderer';
+  import { getEntourageDef } from '$lib/utils/entourageCatalog';
+  import { pointInPolygon, positionOnWall, findWallAt as _findWallAt, findHandleAt as _findHandleAt, findFurnitureAt as _findFurnitureAt, findColumnAt as _findColumnAt, findStairAt as _findStairAt, findDoorAt as _findDoorAt, findWindowAt as _findWindowAt, findRoomAt as _findRoomAt, hitTestMeasurement as _hitTestMeasurement, hitTestAnnotation as _hitTestAnnotation, hitTestTextAnnotation as _hitTestTextAnnotation, findEntourageAt } from '$lib/utils/hitTesting';
 
   let canvas: HTMLCanvasElement;
   let ctx: CanvasRenderingContext2D;
@@ -40,6 +41,8 @@
 
   // Wall drawing state
   let wallStart: Point | null = $state(null);
+  // Digits typed while drawing a wall — Enter places the wall at exactly this length (issue #6)
+  let typedWallLength = $state('');
   let wallSequenceFirst: Point | null = $state(null);
   let mousePos: Point = $state({ x: 0, y: 0 });
 
@@ -57,6 +60,10 @@
 
   // Furniture drag state
   let draggingFurnitureId: string | null = $state(null);
+  let draggingEntourageId: string | null = $state(null);
+  let resizingEntourageId: string | null = $state(null);
+  let currentEntourageDefId: string | null = $state(null);
+  let customEntourageDefs: CustomEntourageDef[] | undefined = $state(undefined);
   let dragOffset: Point = { x: 0, y: 0 };
   let dragStartRotation: number = 0;
   let dragWasWallSnapped: boolean = false;
@@ -94,7 +101,7 @@
   let showRulers = $state(true);
 
   // Layer visibility toggles
-  let layerVis = $state({ walls: true, doors: true, windows: true, furniture: true, stairs: true, columns: true, guides: true, measurements: true, annotations: true });
+  let layerVis = $state({ walls: true, doors: true, windows: true, furniture: true, stairs: true, columns: true, guides: true, measurements: true, annotations: true, entourage: true });
   // Sync showFurnitureStore ↔ layerVisibility.furniture
   let showFurniture = $derived(layerVis.furniture);
   $effect(() => { showFurnitureStore.set(layerVis.furniture); });
@@ -106,7 +113,7 @@
     units: 'metric', showDimensions: true, showExternalDimensions: true,
     showInternalDimensions: false, showExtensionLines: true,
     showObjectDistance: true, dimensionLineColor: '#1e293b',
-    snapToGrid: true, gridSize: 25,
+    wallMeasureMode: 'centerline', snapToGrid: true, gridSize: 25,
   });
   projectSettings.subscribe((s) => {
     dimSettings = s;
@@ -510,7 +517,7 @@
   }
 
   function drawWall(w: Wall, selected: boolean) {
-    _drawWall(getCS(), w, selected, showDimensions, dimSettings);
+    _drawWall(getCS(), w, selected, showDimensions, dimSettings, currentFloor?.walls);
   }
 
   function drawDoorOnWall(wall: Wall, door: Door) {
@@ -580,7 +587,11 @@
     const ux = tan.x, uy = tan.y;
     const nx = -uy, ny = ux;
     const isDoor = placementPreview.type === 'door';
-    const itemWidth = isDoor ? 90 : 120;
+    const doorWidths: Record<string, number> = {
+      single: 90, double: 150, sliding: 180, french: 150,
+      pocket: 90, bifold: 180, opening: 100, garage: 240,
+    };
+    const itemWidth = isDoor ? (doorWidths[currentDoorType] ?? 90) : 120;
     const halfW = (itemWidth / 2) * zoom;
     const thickness = Math.max(wall.thickness * zoom, 4);
 
@@ -599,22 +610,33 @@
     ctx.fill();
 
     if (isDoor) {
-      const wallAngle = Math.atan2(uy, ux);
-      const r = itemWidth * zoom;
-      const hingeX = s.x - ux * halfW;
-      const hingeY = s.y - uy * halfW;
-      const startAngle = wallAngle + Math.PI;
-      const endAngle = startAngle + Math.PI / 2;
-      ctx.strokeStyle = '#3b82f6';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(hingeX, hingeY, r, Math.min(startAngle, endAngle), Math.max(startAngle, endAngle));
-      ctx.stroke();
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(hingeX, hingeY);
-      ctx.lineTo(hingeX + r * Math.cos(endAngle), hingeY + r * Math.sin(endAngle));
-      ctx.stroke();
+      // Openings and garage doors have no swing — show the gap and a panel line
+      const noSwing = currentDoorType === 'opening' || currentDoorType === 'garage';
+      if (!noSwing) {
+        const wallAngle = Math.atan2(uy, ux);
+        const r = itemWidth * zoom;
+        const hingeX = s.x - ux * halfW;
+        const hingeY = s.y - uy * halfW;
+        const startAngle = wallAngle + Math.PI;
+        const endAngle = startAngle + Math.PI / 2;
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(hingeX, hingeY, r, Math.min(startAngle, endAngle), Math.max(startAngle, endAngle));
+        ctx.stroke();
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(hingeX, hingeY);
+        ctx.lineTo(hingeX + r * Math.cos(endAngle), hingeY + r * Math.sin(endAngle));
+        ctx.stroke();
+      } else if (currentDoorType === 'garage') {
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(s.x - ux * halfW, s.y - uy * halfW);
+        ctx.lineTo(s.x + ux * halfW, s.y + uy * halfW);
+        ctx.stroke();
+      }
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = '#3b82f6';
       const jamb = thickness / 2 + 2;
@@ -1113,7 +1135,8 @@
         draggingColumnId || draggingWallEndpoint || draggingWallParallel || draggingCurveHandle ||
         draggingHandle || draggingMultiSelect || draggingRoomId || draggingRoomLabelId ||
         draggingTextAnnotationId || draggingGuideId || measuring || annotating ||
-        currentPlacingId || isPlacingStair || isPlacingColumn || marqueeStart || isPanning) {
+        currentPlacingId || isPlacingStair || isPlacingColumn || marqueeStart || isPanning ||
+        draggingEntourageId || resizingEntourageId || currentEntourageDefId) {
       canvasDirty = true;
     }
 
@@ -1182,6 +1205,11 @@
           if (showDimensions && isSelected(win.id)) drawWindowDistanceDimensions(wall, win);
         }
       }
+    }
+
+    // Entourage (2D presentation symbols) — under furniture
+    if (layerVis.entourage) {
+      _drawEntourageItems(getCS(), floor, currentSelectedId, customEntourageDefs, markDirty);
     }
 
     // Furniture
@@ -1425,6 +1453,12 @@
       ctx.restore();
     }
 
+    // Entourage placement ghost
+    if (currentEntourageDefId) {
+      const ghostW = getEntourageDef(currentEntourageDefId)?.width ?? 100;
+      _drawEntourageGhost(getCS(), currentEntourageDefId, customEntourageDefs, mousePos, ghostW);
+    }
+
     // Calibration points
     if (isCalibrating && calPoints.length > 0) {
       ctx.fillStyle = '#ef4444';
@@ -1471,26 +1505,7 @@
     }
     if (wallStart && currentTool === 'wall') {
       drawAngleGuides(wallStart);
-      let endPt = magneticSnap(mousePos);
-      if (shiftDown) {
-        // Force strict angle snap when Shift is held (0°, 45°, 90°, 135°, 180°)
-        const sdx = endPt.x - wallStart.x;
-        const sdy = endPt.y - wallStart.y;
-        const slen = Math.hypot(sdx, sdy);
-        if (slen > 5) {
-          const rawAngle = Math.atan2(sdy, sdx);
-          const snapAngles = [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4, Math.PI, -Math.PI, -3 * Math.PI / 4, -Math.PI / 2, -Math.PI / 4];
-          let bestAngle = 0;
-          let bestDiff = Infinity;
-          for (const sa of snapAngles) {
-            const diff = Math.abs(rawAngle - sa);
-            if (diff < bestDiff) { bestDiff = diff; bestAngle = sa; }
-          }
-          endPt = { x: wallStart.x + slen * Math.cos(bestAngle), y: wallStart.y + slen * Math.sin(bestAngle) };
-        }
-      } else {
-        endPt = angleSnap(wallStart, endPt);
-      }
+      const endPt = applyTypedWallLength(snapWallEndPoint(mousePos));
       const s = worldToScreen(wallStart.x, wallStart.y);
       const e = worldToScreen(endPt.x, endPt.y);
       const dx = e.x - s.x, dy = e.y - s.y;
@@ -1516,15 +1531,18 @@
       const displayAngle = ((angle % 360) + 360) % 360;
       const dimMidX = (s.x + e.x) / 2;
       const dimMidY = (s.y + e.y) / 2;
-      const dimText = formatLength(plen, dimSettings.units);
+      const typedActive = typedWallLengthCm() !== null;
+      const dimText = typedActive
+        ? `${formatLength(plen, dimSettings.units)} ⏎`
+        : formatLength(plen, dimSettings.units);
       const angleText = shiftDown ? `${Math.round(displayAngle)}° ⇧` : `${Math.round(displayAngle)}°`;
 
-      // Dimension pill (on the wall)
+      // Dimension pill (on the wall) — amber while an exact length is being typed
       ctx.font = 'bold 11px system-ui, sans-serif';
       const dimTW = ctx.measureText(dimText).width;
       const dimPW = dimTW + 12;
       const dimPH = 18;
-      ctx.fillStyle = '#1e293b';
+      ctx.fillStyle = typedActive ? '#b45309' : '#1e293b';
       ctx.beginPath();
       ctx.roundRect(dimMidX - dimPW / 2, dimMidY - dimPH / 2 - 12, dimPW, dimPH, dimPH / 2);
       ctx.fill();
@@ -1774,6 +1792,8 @@
     const unsub_simple = simpleMode.subscribe((v) => { currentSimpleMode = v; markDirty(); });
     const unsub_vpk = viewportKind.subscribe((v) => { isPhoneView = v === 'phone'; markDirty(); });
     const unsub11 = placingStair.subscribe((v) => { isPlacingStair = v; markDirty(); });
+    const unsubEnt1 = placingEntourageId.subscribe((id) => { currentEntourageDefId = id; markDirty(); });
+    const unsubEnt2 = currentProject.subscribe((pr) => { customEntourageDefs = pr?.customEntourage; markDirty(); });
     const unsub_layers = layerVisibility.subscribe((v) => { layerVis = v; markDirty(); });
     const unsub_col = placingColumn.subscribe((v) => { isPlacingColumn = v; markDirty(); });
     const unsub_cols = placingColumnShape.subscribe((v) => { placingColShape = v; markDirty(); });
@@ -1816,7 +1836,14 @@
     }
     document.addEventListener('paste', handlePaste);
 
-    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsub_simple(); unsub_vpk(); document.removeEventListener('paste', handlePaste); };
+    // Touch input — registered manually so the handlers are non-passive
+    // (Svelte attaches touch listeners passively, which blocks preventDefault)
+    canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', onTouchEnd, { passive: false });
+
+    return () => { resizeObs.disconnect(); unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6(); unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12(); unsub13(); unsub_multi(); unsub14(); unsub_col(); unsub_cols(); unsub_layers(); unsub_snapgrid(); unsub_simple(); unsub_vpk(); unsubEnt1(); unsubEnt2(); document.removeEventListener('paste', handlePaste); canvas.removeEventListener('touchstart', onTouchStart); canvas.removeEventListener('touchmove', onTouchMove); canvas.removeEventListener('touchend', onTouchEnd); canvas.removeEventListener('touchcancel', onTouchEnd); };
   });
 
   /** Compute world bounding box of all elements */
@@ -2083,6 +2110,14 @@
     }
 
     // Stair placement (before select-mode handlers to avoid interception)
+    if (currentEntourageDefId) {
+      const entW = getEntourageDef(currentEntourageDefId)?.width ?? 100;
+      const entId = addEntourageItem(currentEntourageDefId, { x: snap(wp.x), y: snap(wp.y) }, entW);
+      if (!e.shiftKey) placingEntourageId.set(null); // hold Shift to keep stamping
+      selectedElementId.set(entId);
+      return;
+    }
+
     if (isPlacingStair) {
       const pos = { x: snap(wp.x), y: snap(wp.y) };
       const id = addStair(pos);
@@ -2191,23 +2226,9 @@
     }
 
     if (tool === 'wall') {
-      let endPt = magneticSnap(wp);
-      if (wallStart) {
-        if (shiftDown) {
-          const sdx = endPt.x - wallStart.x;
-          const sdy = endPt.y - wallStart.y;
-          const slen = Math.hypot(sdx, sdy);
-          if (slen > 5) {
-            const rawAngle = Math.atan2(sdy, sdx);
-            const snapAngles = [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4, Math.PI, -Math.PI, -3 * Math.PI / 4, -Math.PI / 2, -Math.PI / 4];
-            let bestAngle = 0, bestDiff = Infinity;
-            for (const sa of snapAngles) { const diff = Math.abs(rawAngle - sa); if (diff < bestDiff) { bestDiff = diff; bestAngle = sa; } }
-            endPt = { x: wallStart.x + slen * Math.cos(bestAngle), y: wallStart.y + slen * Math.sin(bestAngle) };
-          }
-        } else {
-          endPt = angleSnap(wallStart, endPt);
-        }
-      }
+      let endPt = snapWallEndPoint(wp);
+      if (wallStart) endPt = applyTypedWallLength(endPt);
+      typedWallLength = '';
       if (!wallStart) {
         wallStart = endPt;
         wallSequenceFirst = endPt;
@@ -2351,6 +2372,20 @@
         }
         return;
       }
+      // Entourage resize handle (SE corner of the selected item)
+      const selEnt = currentFloor?.entourage?.find(en => en.id === currentSelectedId);
+      if (selEnt && !selEnt.locked) {
+        const entAspect = entourageAspect(selEnt.defId, customEntourageDefs) || 1;
+        const ea = ((selEnt.rotation || 0) * Math.PI) / 180;
+        const lx = selEnt.width / 2, ly = (selEnt.width * entAspect) / 2;
+        const hx = selEnt.position.x + lx * Math.cos(ea) - ly * Math.sin(ea);
+        const hy = selEnt.position.y + lx * Math.sin(ea) + ly * Math.cos(ea);
+        if (Math.hypot(wp.x - hx, wp.y - hy) < 12 / zoom) {
+          resizingEntourageId = selEnt.id;
+          commitFurnitureMove(); // snapshot before resize for undo
+          return;
+        }
+      }
       // Check stairs
       const stair = findStairAt(wp);
       if (stair) {
@@ -2372,6 +2407,17 @@
           dragOffset = { x: wp.x - fi.position.x, y: wp.y - fi.position.y };
           dragStartRotation = fi.rotation;
           dragWasWallSnapped = false;
+        }
+        return;
+      }
+      // Check entourage (below furniture in priority)
+      const ent = findEntourageAt(wp, currentFloor?.entourage, (d) => entourageAspect(d, customEntourageDefs));
+      if (ent) {
+        selectElement(ent.id, e.shiftKey);
+        if (!e.shiftKey && !ent.locked) {
+          draggingEntourageId = ent.id;
+          commitFurnitureMove(); // snapshot before drag for undo
+          dragOffset = { x: wp.x - ent.position.x, y: wp.y - ent.position.y };
         }
         return;
       }
@@ -2719,6 +2765,21 @@
       const basePos = { x: mousePos.x - stairDragOffset.x, y: mousePos.y - stairDragOffset.y };
       moveStair(draggingStairId, { x: snap(basePos.x), y: snap(basePos.y) });
     }
+    if (draggingEntourageId) {
+      const basePos = { x: mousePos.x - dragOffset.x, y: mousePos.y - dragOffset.y };
+      moveEntourage(draggingEntourageId, { x: snap(basePos.x), y: snap(basePos.y) });
+    }
+    if (resizingEntourageId) {
+      const it = currentFloor?.entourage?.find(en => en.id === resizingEntourageId);
+      if (it) {
+        const entAspect = entourageAspect(it.defId, customEntourageDefs) || 1;
+        const ea = (-(it.rotation || 0) * Math.PI) / 180;
+        const dx = mousePos.x - it.position.x, dy = mousePos.y - it.position.y;
+        const lx = Math.abs(dx * Math.cos(ea) - dy * Math.sin(ea));
+        const ly = Math.abs(dx * Math.sin(ea) + dy * Math.cos(ea));
+        resizeEntourage(it.id, Math.max(10, Math.max(lx * 2, (ly * 2) / entAspect)));
+      }
+    }
     if (draggingFurnitureId) {
       const basePos = { x: mousePos.x - dragOffset.x, y: mousePos.y - dragOffset.y };
       const fi = currentFloor?.furniture.find(f => f.id === draggingFurnitureId);
@@ -2894,6 +2955,8 @@
     draggingWallParallel = null;
     draggingCurveHandle = null;
     draggingFurnitureId = null;
+    draggingEntourageId = null;
+    resizingEntourageId = null;
     draggingStairId = null;
     draggingColumnId = null;
     draggingDoorId = null;
@@ -2948,9 +3011,173 @@
     }
   }
 
+  // ── Touch input (phones/tablets) ──────────────────────────────────
+  // One finger drives the existing mouse pipeline via synthetic MouseEvents
+  // (so every tool works unchanged); two fingers pinch-zoom and pan.
+  // Listeners are registered manually in onMount with { passive: false }
+  // because we must preventDefault to stop scrolling and the browser's
+  // compatibility mouse events (which would double-fire the handlers).
+  let pinchState: { dist: number; cx: number; cy: number } | null = null;
+  let singleTouchActive = false;
+  let lastTapTime = 0;
+  let lastTapX = 0;
+  let lastTapY = 0;
+
+  function dispatchMouse(type: 'mousedown' | 'mousemove' | 'mouseup' | 'click' | 'dblclick', clientX: number, clientY: number) {
+    canvas.dispatchEvent(new MouseEvent(type, {
+      clientX,
+      clientY,
+      button: 0,
+      buttons: type === 'mousedown' || type === 'mousemove' ? 1 : 0,
+      bubbles: true,
+      cancelable: true,
+    }));
+  }
+
+  function onTouchStart(e: TouchEvent) {
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      singleTouchActive = true;
+      dispatchMouse('mousedown', e.touches[0].clientX, e.touches[0].clientY);
+    } else if (e.touches.length === 2) {
+      // Second finger landed: abandon any single-finger drag and start pinching
+      if (singleTouchActive) {
+        dispatchMouse('mouseup', e.touches[0].clientX, e.touches[0].clientY);
+        singleTouchActive = false;
+      }
+      const a = e.touches[0], b = e.touches[1];
+      pinchState = {
+        dist: Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY),
+        cx: (a.clientX + b.clientX) / 2,
+        cy: (a.clientY + b.clientY) / 2,
+      };
+    }
+  }
+
+  function onTouchMove(e: TouchEvent) {
+    e.preventDefault();
+    if (pinchState && e.touches.length >= 2) {
+      const a = e.touches[0], b = e.touches[1];
+      const dist = Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY);
+      const cx = (a.clientX + b.clientX) / 2;
+      const cy = (a.clientY + b.clientY) / 2;
+      const rect = canvas.getBoundingClientRect();
+      const sx = cx - rect.left, sy = cy - rect.top;
+      // Zoom about the pinch midpoint (same math as onWheel)
+      const newZoom = Math.max(0.1, Math.min(10, zoom * (dist / (pinchState.dist || dist))));
+      const worldX = (sx - width / 2) / zoom + camX;
+      const worldY = (sy - height / 2) / zoom + camY;
+      camX = worldX - (sx - width / 2) / newZoom;
+      camY = worldY - (sy - height / 2) / newZoom;
+      zoom = newZoom;
+      // Two-finger pan: camera follows the midpoint
+      camX -= (cx - pinchState.cx) / newZoom;
+      camY -= (cy - pinchState.cy) / newZoom;
+      pinchState = { dist, cx, cy };
+      markDirty();
+    } else if (singleTouchActive && e.touches.length === 1) {
+      dispatchMouse('mousemove', e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }
+
+  function onTouchEnd(e: TouchEvent) {
+    e.preventDefault();
+    if (pinchState) {
+      // Leaving pinch: ignore the remaining finger until it lifts too
+      if (e.touches.length < 2) pinchState = null;
+      return;
+    }
+    if (singleTouchActive && e.touches.length === 0) {
+      const t = e.changedTouches[0];
+      singleTouchActive = false;
+      dispatchMouse('mouseup', t.clientX, t.clientY);
+      // Synthesize click so document-level click-outside handlers (menus) fire
+      dispatchMouse('click', t.clientX, t.clientY);
+      // Double-tap → dblclick (finish wall chains, rename rooms, …)
+      const now = Date.now();
+      if (now - lastTapTime < 350 && Math.hypot(t.clientX - lastTapX, t.clientY - lastTapY) < 30) {
+        dispatchMouse('dblclick', t.clientX, t.clientY);
+        lastTapTime = 0;
+      } else {
+        lastTapTime = now;
+        lastTapX = t.clientX;
+        lastTapY = t.clientY;
+      }
+    }
+  }
+
+  // ── Exact-length wall entry (issue #6) ────────────────────────────
+  /** Shared endpoint snapping for wall drawing: magnetic + Shift/angle snap. */
+  function snapWallEndPoint(raw: Point): Point {
+    let endPt = magneticSnap(raw);
+    if (!wallStart) return endPt;
+    if (shiftDown) {
+      // Force strict angle snap when Shift is held (0°, 45°, 90°, 135°, 180°)
+      const sdx = endPt.x - wallStart.x;
+      const sdy = endPt.y - wallStart.y;
+      const slen = Math.hypot(sdx, sdy);
+      if (slen > 5) {
+        const rawAngle = Math.atan2(sdy, sdx);
+        const snapAngles = [0, Math.PI / 4, Math.PI / 2, 3 * Math.PI / 4, Math.PI, -Math.PI, -3 * Math.PI / 4, -Math.PI / 2, -Math.PI / 4];
+        let bestAngle = 0, bestDiff = Infinity;
+        for (const sa of snapAngles) { const diff = Math.abs(rawAngle - sa); if (diff < bestDiff) { bestDiff = diff; bestAngle = sa; } }
+        endPt = { x: wallStart.x + slen * Math.cos(bestAngle), y: wallStart.y + slen * Math.sin(bestAngle) };
+      }
+    } else {
+      endPt = angleSnap(wallStart, endPt);
+    }
+    return endPt;
+  }
+
+  function typedWallLengthCm(): number | null {
+    const v = parseFloat(typedWallLength);
+    if (!isFinite(v) || v <= 0) return null;
+    return dimSettings.units === 'imperial' ? v * 2.54 : v;
+  }
+
+  /** Override the wall end point to the exact typed length along the current direction. */
+  function applyTypedWallLength(endPt: Point): Point {
+    const lenCm = typedWallLengthCm();
+    if (!wallStart || lenCm === null) return endPt;
+    const dx = endPt.x - wallStart.x, dy = endPt.y - wallStart.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 0.001) return endPt;
+    return { x: wallStart.x + (dx / d) * lenCm, y: wallStart.y + (dy / d) * lenCm };
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     shiftDown = e.shiftKey;
     if (e.code === 'Space') { spaceDown = true; e.preventDefault(); return; }
+
+    // Exact-length entry while drawing a wall (issue #6):
+    // type a number, then Enter places the wall at exactly that length.
+    const keyTargetTag = (e.target as HTMLElement)?.tagName;
+    const inFormField = keyTargetTag === 'INPUT' || keyTargetTag === 'TEXTAREA' || keyTargetTag === 'SELECT';
+    if (currentTool === 'wall' && wallStart && !editingTextAnnotationId && !inFormField && !e.metaKey && !e.ctrlKey) {
+      if (/^[0-9.]$/.test(e.key)) {
+        typedWallLength += e.key;
+        markDirty();
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'Backspace' && typedWallLength) {
+        typedWallLength = typedWallLength.slice(0, -1);
+        markDirty();
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'Enter' && typedWallLengthCm() !== null) {
+        const endPt = applyTypedWallLength(snapWallEndPoint(mousePos));
+        if (Math.hypot(endPt.x - wallStart.x, endPt.y - wallStart.y) > 1) {
+          addWall(wallStart, endPt);
+          wallStart = endPt;
+        }
+        typedWallLength = '';
+        markDirty();
+        e.preventDefault();
+        return;
+      }
+    }
 
     // Delete selected guide line
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedGuideId) {
@@ -2987,8 +3214,8 @@
 
     // Canvas-specific Escape handling (before global shortcut eats it)
     if (e.code === 'Escape') {
-      wallStart = null; wallSequenceFirst = null;
-      // Central cancel: clears placingFurniture/Stair/Column + resets tool to select
+      wallStart = null; wallSequenceFirst = null; typedWallLength = '';
+      // Central cancel: clears placingFurniture/Stair/Column/Entourage + resets tool to select
       // so the user can never get trapped in a placement mode.
       cancelPlacement();
       editingTextAnnotationId = null;
@@ -3014,6 +3241,7 @@
         for (const w of currentFloor.windows) allIds.add(w.id);
         if (currentFloor.stairs) for (const s of currentFloor.stairs) allIds.add(s.id);
         if (currentFloor.columns) for (const c of currentFloor.columns) allIds.add(c.id);
+        if (currentFloor.entourage) for (const en of currentFloor.entourage) allIds.add(en.id);
         selectedElementIds.set(allIds);
         const first = [...allIds][0] ?? null;
         selectedElementId.set(first);
@@ -3513,7 +3741,7 @@
 <div class="w-full h-full relative overflow-hidden" role="application">
   <canvas
     bind:this={canvas}
-    class="block w-full h-full"
+    class="block w-full h-full touch-none"
     tabindex="0"
     aria-label="Floor plan editor canvas"
     style="cursor: {cursorStyle}; touch-action: none;"
@@ -3618,7 +3846,7 @@
       bind:this={minimapCanvas}
       width="180"
       height="120"
-      class="absolute bottom-10 right-2 rounded-lg shadow-lg border border-gray-300 cursor-crosshair bg-white"
+      class="absolute bottom-10 right-2 rounded-lg shadow-lg border border-gray-300 cursor-crosshair bg-white max-md:hidden"
       style="z-index: 15;"
       onclick={onMinimapClick}
     ></canvas>

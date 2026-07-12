@@ -3,7 +3,7 @@
  * All functions are pure — they take data and return results.
  * Extracted from FloorPlanCanvas.svelte.
  */
-import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, Floor, Measurement, Annotation, TextAnnotation } from '$lib/models/types';
+import type { Point, Wall, Door, Window as Win, FurnitureItem, Stair, Column, Floor, Measurement, Annotation, TextAnnotation, EntourageItem } from '$lib/models/types';
 import type { Room } from '$lib/models/types';
 import { getCatalogItem } from '$lib/utils/furnitureCatalog';
 import { getRoomPolygon } from '$lib/utils/roomDetection';
@@ -246,6 +246,28 @@ export function hitTestTextAnnotation(wp: Point, floor: Floor, ctx: CanvasRender
     }
     const pad = 8 / zoom;
     if (Math.abs(dx) < maxW / 2 + pad && Math.abs(dy) < totalHeight / 2 + pad) return ta.id;
+  }
+  return null;
+}
+
+/** Hit-test entourage items (topmost first). aspectOf resolves defId -> height/width. */
+export function findEntourageAt(
+  p: Point,
+  items: EntourageItem[] | undefined,
+  aspectOf: (defId: string) => number,
+): EntourageItem | null {
+  if (!items) return null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    const w = it.width;
+    const h = w * aspectOf(it.defId);
+    // Transform the point into the item's local (unrotated) frame
+    const a = (-(it.rotation || 0) * Math.PI) / 180;
+    const dx = p.x - it.position.x;
+    const dy = p.y - it.position.y;
+    const lx = dx * Math.cos(a) - dy * Math.sin(a);
+    const ly = dx * Math.sin(a) + dy * Math.cos(a);
+    if (Math.abs(lx) <= w / 2 && Math.abs(ly) <= h / 2) return it;
   }
   return null;
 }

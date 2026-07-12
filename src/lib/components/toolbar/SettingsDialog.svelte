@@ -94,6 +94,7 @@
     showExtensionLines: true,
     showObjectDistance: true,
     dimensionLineColor: '#1e293b',
+    wallMeasureMode: 'centerline',
     snapToGrid: true,
     gridSize: 25,
   });
@@ -191,6 +192,21 @@
                 class="px-3 py-1.5 text-sm font-medium transition-colors {settings.units === 'imperial' ? 'bg-slate-700 text-white' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'}"
                 onclick={() => updateSetting('units', 'imperial')}
               >ft, inch</button>
+            </div>
+          </div>
+
+          <!-- Wall measurement mode (centerline vs edge-to-edge clear span) -->
+          <div class="flex items-center justify-between mb-5">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-300" title="Edge to edge shows the clear span between adjoining wall faces">Measure walls</span>
+            <div class="flex rounded-lg border border-gray-300 dark:border-gray-600 overflow-hidden">
+              <button
+                class="px-3 py-1.5 text-sm font-medium transition-colors {settings.wallMeasureMode !== 'edge' ? 'bg-slate-700 text-white' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'}"
+                onclick={() => updateSetting('wallMeasureMode', 'centerline')}
+              >Centerline</button>
+              <button
+                class="px-3 py-1.5 text-sm font-medium transition-colors {settings.wallMeasureMode === 'edge' ? 'bg-slate-700 text-white' : 'bg-white dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'}"
+                onclick={() => updateSetting('wallMeasureMode', 'edge')}
+              >Edge to edge</button>
             </div>
           </div>
 

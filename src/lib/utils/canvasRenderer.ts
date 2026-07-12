@@ -12,6 +12,8 @@ import { getCatalogItem } from '$lib/utils/furnitureCatalog';
 import { drawFurnitureIcon } from '$lib/utils/furnitureIcons';
 import { getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
 import { getWallTextureCanvas, getFloorTextureCanvas } from '$lib/utils/textureGenerator';
+import { getEntourageDef } from '$lib/utils/entourageCatalog';
+import type { EntourageItem, CustomEntourageDef } from '$lib/models/types';
 
 // ── Wall geometry helpers ────────────────────────────────────────────
 
@@ -63,6 +65,35 @@ export function wallTangentAt(w: Wall, t: number): Point {
 
 function wallThicknessScreen(w: Wall, zoom: number): number {
   return Math.max(w.thickness * zoom, 4);
+}
+
+/**
+ * Half-thickness insets at each end of a wall caused by abutting
+ * (non-collinear) neighbor walls. Used for edge-to-edge ("clear span")
+ * dimensions: centerline length minus these insets is the distance
+ * between the neighbors' inner faces.
+ */
+export function wallEdgeInsets(w: Wall, allWalls: Wall[]): { start: number; end: number } {
+  const EP = 5;
+  const wdx = w.end.x - w.start.x, wdy = w.end.y - w.start.y;
+  const wl = Math.hypot(wdx, wdy) || 1;
+  const insetAt = (pt: Point): number => {
+    let inset = 0;
+    for (const other of allWalls) {
+      if (other.id === w.id) continue;
+      const touchesStart = Math.abs(other.start.x - pt.x) < EP && Math.abs(other.start.y - pt.y) < EP;
+      const touchesEnd = Math.abs(other.end.x - pt.x) < EP && Math.abs(other.end.y - pt.y) < EP;
+      if (!touchesStart && !touchesEnd) continue;
+      // Collinear continuations don't narrow the span — only crossing walls do
+      const odx = other.end.x - other.start.x, ody = other.end.y - other.start.y;
+      const ol = Math.hypot(odx, ody) || 1;
+      const cross = Math.abs((wdx / wl) * (ody / ol) - (wdy / wl) * (odx / ol));
+      if (cross < 0.1) continue;
+      inset = Math.max(inset, other.thickness / 2);
+    }
+    return inset;
+  };
+  return { start: insetAt(w.start), end: insetAt(w.end) };
 }
 
 // ── Coordinate conversion (local helpers using CanvasState) ─────────
@@ -119,6 +150,7 @@ export function drawWall(
   selected: boolean,
   showDimensions: boolean,
   dimSettings: ProjectSettings,
+  allWalls?: Wall[],
 ): void {
   const { ctx, zoom, width, height } = cs;
   const s = wts(cs, w.start.x, w.start.y);
@@ -261,8 +293,23 @@ export function drawWall(
   if (!showDimensions || !dimSettings.showExternalDimensions) return;
   const wlen = wallLength(w);
   if (wlen < 10) return;
-  const mx = (s.x + e.x) / 2;
-  const my = (s.y + e.y) / 2;
+
+  // Edge-to-edge (clear span) mode: shorten the measured span by the
+  // half-thickness of abutting walls at each end (issue #11).
+  let dimLen = wlen;
+  let insetS = 0, insetE = 0;
+  if (dimSettings.wallMeasureMode === 'edge' && allWalls && !w.curvePoint) {
+    const ins = wallEdgeInsets(w, allWalls);
+    insetS = ins.start;
+    insetE = ins.end;
+    dimLen = Math.max(0, wlen - insetS - insetE);
+  }
+  const ux1 = dx / len, uy1 = dy / len;
+  const sd = { x: s.x + ux1 * insetS * zoom, y: s.y + uy1 * insetS * zoom };
+  const ed = { x: e.x - ux1 * insetE * zoom, y: e.y - uy1 * insetE * zoom };
+
+  const mx = (sd.x + ed.x) / 2;
+  const my = (sd.y + ed.y) / 2;
   const offsetDist = thickness / 2 + 20;
   const nnx = (-dy / len);
   const nny = (dx / len);
@@ -280,15 +327,15 @@ export function drawWall(
     ctx.strokeStyle = dimSettings.dimensionLineColor + '80';
     ctx.lineWidth = 0.5;
     ctx.beginPath();
-    ctx.moveTo(s.x + nnx * (thickness / 2 + 2) * dimSide, s.y + nny * (thickness / 2 + 2) * dimSide);
-    ctx.lineTo(s.x + nnx * extLen * dimSide, s.y + nny * extLen * dimSide);
-    ctx.moveTo(e.x + nnx * (thickness / 2 + 2) * dimSide, e.y + nny * (thickness / 2 + 2) * dimSide);
-    ctx.lineTo(e.x + nnx * extLen * dimSide, e.y + nny * extLen * dimSide);
+    ctx.moveTo(sd.x + nnx * (thickness / 2 + 2) * dimSide, sd.y + nny * (thickness / 2 + 2) * dimSide);
+    ctx.lineTo(sd.x + nnx * extLen * dimSide, sd.y + nny * extLen * dimSide);
+    ctx.moveTo(ed.x + nnx * (thickness / 2 + 2) * dimSide, ed.y + nny * (thickness / 2 + 2) * dimSide);
+    ctx.lineTo(ed.x + nnx * extLen * dimSide, ed.y + nny * extLen * dimSide);
     ctx.stroke();
   }
 
-  const ds = { x: s.x + dOffX, y: s.y + dOffY };
-  const de = { x: e.x + dOffX, y: e.y + dOffY };
+  const ds = { x: sd.x + dOffX, y: sd.y + dOffY };
+  const de = { x: ed.x + dOffX, y: ed.y + dOffY };
   const dimMx = (ds.x + de.x) / 2;
   const dimMy = (ds.y + de.y) / 2;
 
@@ -297,7 +344,7 @@ export function drawWall(
   ctx.font = `${fontSize}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const dimLabel = formatLength(wlen, dimSettings.units);
+  const dimLabel = formatLength(dimLen, dimSettings.units);
   const textW = ctx.measureText(dimLabel).width;
 
   const ux2 = dx / len, uy2 = dy / len;
@@ -537,6 +584,55 @@ export function drawDoorOnWall(cs: CanvasState, wall: Wall, door: Door): void {
       px = ex;
       py = ey;
     }
+
+  } else if (doorType === 'opening') {
+    // Plain doorway (no door): dashed threshold lines along both wall faces
+    ctx.strokeStyle = '#999';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    for (const side of [-1, 1]) {
+      const ox = nx * (thickness / 2) * side;
+      const oy = ny * (thickness / 2) * side;
+      ctx.beginPath();
+      ctx.moveTo(s.x - ux * halfDoor + ox, s.y - uy * halfDoor + oy);
+      ctx.lineTo(s.x + ux * halfDoor + ox, s.y + uy * halfDoor + oy);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+
+  } else if (doorType === 'garage') {
+    // Overhead/sectional garage door: panel line across the opening with
+    // section ticks, plus dashed overhead-track lines into the garage.
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(s.x - ux * halfDoor, s.y - uy * halfDoor);
+    ctx.lineTo(s.x + ux * halfDoor, s.y + uy * halfDoor);
+    ctx.stroke();
+    ctx.lineWidth = 1;
+    const segs = 4;
+    for (let i = 1; i < segs; i++) {
+      const t2 = -1 + (2 * i) / segs;
+      const tx = s.x + ux * halfDoor * t2;
+      const ty = s.y + uy * halfDoor * t2;
+      ctx.beginPath();
+      ctx.moveTo(tx + nx * 3, ty + ny * 3);
+      ctx.lineTo(tx - nx * 3, ty - ny * 3);
+      ctx.stroke();
+    }
+    const trackDir = (door.flipSide ?? false) ? -1 : 1;
+    const trackLen = halfDoor * 0.8;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = '#999';
+    for (const side of [-1, 1]) {
+      const bx = s.x + ux * halfDoor * 0.7 * side;
+      const by = s.y + uy * halfDoor * 0.7 * side;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx + nx * trackLen * trackDir, by + ny * trackLen * trackDir);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
 }
 
@@ -1289,12 +1385,15 @@ const ROOM_FILLS_DEFAULT = [
 ];
 
 export function getRoomFill(room: Room, index: number): string {
+  // Solid-color floors (floorTexture 'none') show the room color much more
+  // strongly since there is no texture painted on top.
+  const solid = room.floorTexture === 'none';
   if (room.color) {
     const hex = room.color.replace('#', '');
     const r = parseInt(hex.substring(0, 2), 16);
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
-    return `rgba(${r}, ${g}, ${b}, 0.12)`;
+    return `rgba(${r}, ${g}, ${b}, ${solid ? 0.45 : 0.12})`;
   }
   return ROOM_FILLS_BY_TYPE[room.name] ?? ROOM_FILLS_DEFAULT[index % ROOM_FILLS_DEFAULT.length];
 }
@@ -1308,6 +1407,9 @@ const ROOM_FLOOR_PATTERN: Record<string, FloorPatternType> = {
 
 export function drawRoomFloorPattern(cs: CanvasState, room: Room, screenPoly: { x: number; y: number }[]): void {
   const { ctx, zoom } = cs;
+  // Solid-color floor: no texture, no fallback pattern — the fill from
+  // getRoomFill is the floor.
+  if (room.floorTexture === 'none') return;
   if (room.floorTexture) {
     const texCanvas = getFloorTextureCanvas(room.floorTexture);
     if (texCanvas) {
@@ -1526,7 +1628,11 @@ export function drawMinimap(
     const fw = Math.max(2, (fi.width ?? cat.width) * scale);
     const fd = Math.max(2, (fi.depth ?? cat.depth) * scale);
     mctx.fillStyle = (fi.color ?? cat.color) + 'aa';
-    mctx.fillRect(p.x - fw / 2, p.y - fd / 2, fw, fd);
+    mctx.save();
+    mctx.translate(p.x, p.y);
+    mctx.rotate((fi.rotation * Math.PI) / 180);
+    mctx.fillRect(-fw / 2, -fd / 2, fw, fd);
+    mctx.restore();
   }
 
   const { width, height, zoom, camX, camY } = cs;
@@ -1542,4 +1648,134 @@ export function drawMinimap(
   mctx.strokeRect(vtl.x, vtl.y, vw, vh);
 
   mctx.strokeStyle = '#cbd5e1'; mctx.lineWidth = 1; mctx.strokeRect(0, 0, mw, mh);
+}
+
+// ── Entourage drawing (2D presentation symbols) ─────────────────────
+
+const entouragePathCache = new Map<string, Path2D[]>();
+function getEntouragePaths(defId: string): Path2D[] | null {
+  let cached = entouragePathCache.get(defId);
+  if (cached) return cached;
+  const def = getEntourageDef(defId);
+  if (!def) return null;
+  cached = def.paths.map((d) => new Path2D(d));
+  entouragePathCache.set(defId, cached);
+  return cached;
+}
+
+const entourageImageCache = new Map<string, HTMLImageElement>();
+function getEntourageImage(def: CustomEntourageDef, onLoad?: () => void): HTMLImageElement {
+  let img = entourageImageCache.get(def.id);
+  if (!img) {
+    img = new Image();
+    img.onload = () => onLoad?.();
+    img.src = def.dataUrl;
+    entourageImageCache.set(def.id, img);
+  }
+  return img;
+}
+
+/** height/width aspect for a built-in or custom entourage def */
+export function entourageAspect(defId: string, customDefs?: CustomEntourageDef[]): number {
+  return getEntourageDef(defId)?.aspect ?? customDefs?.find((c) => c.id === defId)?.aspect ?? 1;
+}
+
+export function drawEntourageItem(
+  cs: CanvasState,
+  item: EntourageItem,
+  customDefs: CustomEntourageDef[] | undefined,
+  selected: boolean,
+  onImageLoad?: () => void,
+): void {
+  const { ctx, zoom } = cs;
+  const s = wts(cs, item.position.x, item.position.y);
+  const def = getEntourageDef(item.defId);
+  const custom = def ? undefined : customDefs?.find((c) => c.id === item.defId);
+  if (!def && !custom) return;
+  const aspect = def?.aspect ?? custom!.aspect;
+  const wPx = item.width * zoom;
+  const hPx = wPx * aspect;
+
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(((item.rotation || 0) * Math.PI) / 180);
+  ctx.globalAlpha = item.opacity ?? 1;
+
+  if (def) {
+    const scale = wPx / 100;
+    if (scale > 0.01) {
+      ctx.save();
+      ctx.scale(scale, scale);
+      ctx.translate(-50, -50 * aspect);
+      ctx.strokeStyle = '#4b5563';
+      ctx.lineWidth = Math.min(1.6 / scale, 4);
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      for (const path of getEntouragePaths(item.defId) ?? []) ctx.stroke(path);
+      ctx.restore();
+    }
+  } else if (custom) {
+    const img = getEntourageImage(custom, onImageLoad);
+    if (img.complete && img.naturalWidth > 0) {
+      ctx.drawImage(img, -wPx / 2, -hPx / 2, wPx, hPx);
+    } else {
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(-wPx / 2, -hPx / 2, wPx, hPx);
+      ctx.setLineDash([]);
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  if (selected) {
+    ctx.strokeStyle = '#3b82f6';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 3]);
+    ctx.strokeRect(-wPx / 2 - 4, -hPx / 2 - 4, wPx + 8, hPx + 8);
+    ctx.setLineDash([]);
+    // SE resize handle
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.rect(wPx / 2 - 1, hPx / 2 - 1, 8, 8);
+    ctx.fill();
+    ctx.stroke();
+    if (item.locked) {
+      ctx.font = '12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('🔒', 0, -hPx / 2 - 10);
+    }
+  }
+  ctx.restore();
+}
+
+export function drawEntourageItems(
+  cs: CanvasState,
+  floor: Floor,
+  selectedId: string | null,
+  customDefs?: CustomEntourageDef[],
+  onImageLoad?: () => void,
+): void {
+  if (!floor.entourage) return;
+  for (const item of floor.entourage) {
+    drawEntourageItem(cs, item, customDefs, item.id === selectedId, onImageLoad);
+  }
+}
+
+export function drawEntourageGhost(
+  cs: CanvasState,
+  defId: string,
+  customDefs: CustomEntourageDef[] | undefined,
+  pos: Point,
+  width: number,
+): void {
+  const { ctx } = cs;
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  drawEntourageItem(
+    cs,
+    { id: '__ghost__', defId, position: pos, width, rotation: 0 },
+    customDefs,
+    false,
+  );
+  ctx.restore();
 }

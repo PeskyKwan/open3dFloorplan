@@ -1388,40 +1388,57 @@
       hMesh.castShadow = true;
       wallGroup.add(hMesh);
 
-      // Door panel — hinged on left side, slightly ajar (15°)
-      const panelMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.5 });
-      const panelGeo = new THREE.BoxGeometry(door.width - 2, doorHeight - 4, 4);
-      // Shift geometry so pivot is at left edge
-      panelGeo.translate(door.width / 2 - 1, 0, 0);
-      const panelMesh = new THREE.Mesh(panelGeo, panelMat);
-      // Position at left jamb inner edge
-      const hingeOffset = -door.width / 2;
-      const swingAngle = 0.26; // ~15 degrees ajar
-      const normalX = -Math.sin(angle);
-      const normalZ = Math.cos(angle);
-      panelMesh.position.set(
-        px + hingeOffset * Math.cos(angle) + normalX * 2,
-        doorHeight / 2 - 2,
-        py + hingeOffset * Math.sin(angle) + normalZ * 2
-      );
-      panelMesh.rotation.y = -angle + swingAngle;
-      panelMesh.castShadow = true;
-      wallGroup.add(panelMesh);
+      if (door.type === 'opening') {
+        // Plain doorway — jambs and header only, no door leaf
+      } else if (door.type === 'garage') {
+        // Sectional overhead door: stacked horizontal panels filling the opening
+        const secMat = new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.7 });
+        const sections = 4;
+        const secH = (doorHeight - 6) / sections;
+        for (let si = 0; si < sections; si++) {
+          const secGeo = new THREE.BoxGeometry(door.width - 2, secH - 2, 5);
+          const secMesh = new THREE.Mesh(secGeo, secMat);
+          secMesh.position.set(px, secH / 2 + 2 + si * secH, py);
+          secMesh.rotation.y = -angle;
+          secMesh.castShadow = true;
+          wallGroup.add(secMesh);
+        }
+      } else {
+        // Door panel — hinged on left side, slightly ajar (15°)
+        const panelMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.5 });
+        const panelGeo = new THREE.BoxGeometry(door.width - 2, doorHeight - 4, 4);
+        // Shift geometry so pivot is at left edge
+        panelGeo.translate(door.width / 2 - 1, 0, 0);
+        const panelMesh = new THREE.Mesh(panelGeo, panelMat);
+        // Position at left jamb inner edge
+        const hingeOffset = -door.width / 2;
+        const swingAngle = 0.26; // ~15 degrees ajar
+        const normalX = -Math.sin(angle);
+        const normalZ = Math.cos(angle);
+        panelMesh.position.set(
+          px + hingeOffset * Math.cos(angle) + normalX * 2,
+          doorHeight / 2 - 2,
+          py + hingeOffset * Math.sin(angle) + normalZ * 2
+        );
+        panelMesh.rotation.y = -angle + swingAngle;
+        panelMesh.castShadow = true;
+        wallGroup.add(panelMesh);
 
-      // Door handle (small sphere)
-      const handleMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
-      const handleGeo = new THREE.SphereGeometry(3, 8, 8);
-      const handleMesh = new THREE.Mesh(handleGeo, handleMat);
-      // Place on the door panel's right side at handle height
-      const handleLocalX = door.width - 12;
-      const handleCos = Math.cos(-angle + swingAngle);
-      const handleSin = Math.sin(-angle + swingAngle);
-      handleMesh.position.set(
-        panelMesh.position.x + handleLocalX * handleCos,
-        100,
-        panelMesh.position.z - handleLocalX * handleSin
-      );
-      wallGroup.add(handleMesh);
+        // Door handle (small sphere)
+        const handleMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c0, metalness: 0.8, roughness: 0.2 });
+        const handleGeo = new THREE.SphereGeometry(3, 8, 8);
+        const handleMesh = new THREE.Mesh(handleGeo, handleMat);
+        // Place on the door panel's right side at handle height
+        const handleLocalX = door.width - 12;
+        const handleCos = Math.cos(-angle + swingAngle);
+        const handleSin = Math.sin(-angle + swingAngle);
+        handleMesh.position.set(
+          panelMesh.position.x + handleLocalX * handleCos,
+          100,
+          panelMesh.position.z - handleLocalX * handleSin
+        );
+        wallGroup.add(handleMesh);
+      }
     }
 
     // Windows
@@ -1558,7 +1575,15 @@
 
       // Use room's floor material or fallback to color coding
       let material: THREE.MeshStandardMaterial;
-      if (room.floorTexture) {
+      if (room.floorTexture === 'none') {
+        // Solid-color floor: no texture; use the room's picked color
+        material = new THREE.MeshStandardMaterial({
+          color: new THREE.Color(room.color ?? getMaterial('none').color),
+          roughness: 0.9,
+          transparent: false,
+          opacity: 1.0
+        });
+      } else if (room.floorTexture) {
         const floorMat = getMaterial(room.floorTexture);
         const floorCanvas = getFloorTextureCanvas(room.floorTexture);
         if (floorCanvas) {
@@ -2284,7 +2309,7 @@
 
   <!-- Camera Preview Panel -->
   {#if cameraPreviewOpen && cameraPlaced}
-    <div class="absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto" style="width: 420px; max-height: calc(100vh - 8rem);">
+    <div class="absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto max-w-[calc(100vw-2rem)]" style="width: 420px; max-height: calc(100vh - 8rem);">
       <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
         <span class="text-white text-sm font-medium">📷 Interior Camera</span>
         <div class="flex gap-2">

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { currentProject, viewMode, selectedElementId, selectedRoomId, createDefaultProject, simpleMode } from '$lib/stores/project';
+  import { currentProject, viewMode, selectedElementId, selectedRoomId, createDefaultProject, loadProject, selectedTool, placingFurnitureId, simpleMode } from '$lib/stores/project';
   import { viewportKind, initViewportTracking } from '$lib/stores/viewport';
   import MobileEditor from '$lib/components/mobile/MobileEditor.svelte';
   import { localStore } from '$lib/services/datastore';
+  import { createProjectFromRoomPlan, isRoomPlanJson } from '$lib/utils/roomplanImport';
   import TopBar from '$lib/components/toolbar/TopBar.svelte';
   import BuildPanel from '$lib/components/sidebar/BuildPanel.svelte';
   import PropertiesPanel from '$lib/components/sidebar/PropertiesPanel.svelte';
@@ -34,6 +35,57 @@
   let showHelp = $state(false);
   let showUndoHistory = $state(false);
 
+  // Mobile (< md): BuildPanel becomes an off-canvas drawer toggled by the Tools FAB.
+  let buildPanelOpen = $state(false);
+  // Close the drawer once the user has picked a tool / item so the canvas is usable
+  selectedTool.subscribe(() => { if (buildPanelOpen) buildPanelOpen = false; });
+  placingFurnitureId.subscribe((id) => { if (id && buildPanelOpen) buildPanelOpen = false; });
+
+  // iOS capture handoff (?import=CODE → fetch RoomPlan JSON from Firebase Storage inbox)
+  let importingCapture = $state(false);
+  let importError = $state<string | null>(null);
+
+  /** Fetch a RoomPlan capture uploaded by the iOS app and open it as a new project. Returns true on success. */
+  async function importCaptureFromCode(code: string): Promise<boolean> {
+    importingCapture = true;
+    try {
+      const url = `https://firebasestorage.googleapis.com/v0/b/openplan3d.firebasestorage.app/o/inbox%2F${code}.json?alt=media`;
+      let res: Response;
+      try {
+        res = await fetch(url);
+      } catch {
+        throw new Error('Network error while downloading the capture. Check your connection and try again.');
+      }
+      if (res.status === 404) {
+        throw new Error(`Capture code ${code} was not found. It may have expired — share it again from the iOS app.`);
+      }
+      if (!res.ok) {
+        throw new Error(`Failed to download the capture (HTTP ${res.status}).`);
+      }
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error('The downloaded capture is not valid JSON.');
+      }
+      if (!isRoomPlanJson(data)) {
+        throw new Error('The downloaded file is not a valid RoomPlan export.');
+      }
+      // Same defaults as the RoomPlan import options dialog
+      const project = createProjectFromRoomPlan(data, `Room Capture ${code}`);
+      loadProject(project);
+      await localStore.save(project);
+      // Remove ?import=CODE so a refresh doesn't re-import
+      history.replaceState(null, '', `/editor?id=${project.id}`);
+      return true;
+    } catch (e: any) {
+      importError = e?.message ?? 'Failed to import capture.';
+      return false;
+    } finally {
+      importingCapture = false;
+    }
+  }
+
   viewMode.subscribe((m) => {
     mode = m;
     if (m === '3d') {
@@ -48,6 +100,22 @@
   onMount(() => {
     (async () => {
       const url = new URL(window.location.href);
+
+      // iOS capture handoff: ?import=CODE
+      const rawCode = url.searchParams.get('import');
+      if (rawCode) {
+        const code = rawCode.toUpperCase();
+        if (/^[A-Z2-9]{4,32}$/.test(code)) {
+          if (await importCaptureFromCode(code)) {
+            ready = true;
+            return;
+          }
+          // Import failed — fall through to the normal load flow (error shown via toast)
+        } else {
+          importError = 'Invalid import code in URL.';
+        }
+      }
+
       const id = url.searchParams.get('id');
       if (id) {
         const project = await localStore.load(id);
@@ -92,7 +160,17 @@
     <TopBar />
     <div class="flex flex-1 overflow-hidden">
       {#if mode === '2d'}
-        <BuildPanel />
+        <!-- Build panel: inline sidebar on md+, off-canvas drawer on phones -->
+        {#if buildPanelOpen}
+          <div
+            class="md:hidden fixed inset-x-0 top-12 bottom-0 bg-black/40 z-40"
+            onclick={() => buildPanelOpen = false}
+            aria-hidden="true"
+          ></div>
+        {/if}
+        <div class="h-full max-md:fixed max-md:left-0 max-md:top-12 max-md:bottom-0 max-md:h-auto max-md:z-50 max-md:shadow-2xl max-md:transition-transform max-md:duration-200 {buildPanelOpen ? '' : 'max-md:-translate-x-full'}">
+          <BuildPanel />
+        </div>
       {/if}
       <div class="flex-1 min-w-0 relative">
         {#if mode === '2d'}
@@ -113,10 +191,22 @@
     </div>
   </div>
 
+  <!-- Tools drawer FAB (mobile only) -->
+  {#if mode === '2d'}
+    <button
+      class="md:hidden fixed bottom-4 left-4 w-12 h-12 rounded-full bg-blue-600 text-white shadow-lg active:bg-blue-700 transition-colors z-40 flex items-center justify-center"
+      onclick={() => buildPanelOpen = !buildPanelOpen}
+      title="Tools"
+      aria-label="Toggle tools panel"
+    >
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    </button>
+  {/if}
+
   <!-- Layers toggle button (hidden in Simple mode) -->
   {#if mode === '2d' && !$simpleMode}
     <button
-      class="fixed bottom-4 left-14 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
+      class="max-md:hidden fixed bottom-4 left-14 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
       class:bg-blue-600={showLayers}
       class:text-white={showLayers}
       class:bg-slate-700={!showLayers}
@@ -130,7 +220,7 @@
   <!-- Undo History toggle button (hidden in Simple mode) -->
   {#if !$simpleMode}
   <button
-    class="fixed bottom-4 left-24 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
+    class="max-md:hidden fixed bottom-4 left-24 w-8 h-8 rounded-full shadow-lg hover:bg-slate-600 transition-colors z-50 text-sm"
     class:bg-blue-600={showUndoHistory}
     class:text-white={showUndoHistory}
     class:bg-slate-700={!showUndoHistory}
@@ -143,9 +233,9 @@
 
   <UndoHistoryPanel bind:visible={showUndoHistory} />
 
-  <!-- Help button -->
+  <!-- Help button (desktop only — keyboard shortcuts are meaningless on touch) -->
   <button
-    class="fixed bottom-4 left-4 w-8 h-8 rounded-full bg-slate-700 text-white text-sm font-bold shadow-lg hover:bg-slate-600 transition-colors z-50"
+    class="max-md:hidden fixed bottom-4 left-4 w-8 h-8 rounded-full bg-slate-700 text-white text-sm font-bold shadow-lg hover:bg-slate-600 transition-colors z-50"
     onclick={() => showHelp = !showHelp}
     title="Keyboard Shortcuts (?)"
     aria-label="Keyboard Shortcuts"
@@ -327,7 +417,24 @@
   <OnboardingTooltip />
   {/if}
 {:else}
-  <div class="h-screen flex items-center justify-center">
-    <p class="text-gray-400">Loading...</p>
+  <div class="h-screen flex flex-col items-center justify-center gap-3">
+    {#if importingCapture}
+      <div class="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" aria-hidden="true"></div>
+      <p class="text-gray-400">Importing capture from iOS app…</p>
+    {:else}
+      <p class="text-gray-400">Loading...</p>
+    {/if}
+  </div>
+{/if}
+
+<!-- iOS capture import error toast -->
+{#if importError}
+  <div class="fixed top-16 left-1/2 -translate-x-1/2 z-[100] w-[calc(100vw-2rem)] max-w-md bg-red-50 border border-red-200 text-red-700 rounded-lg shadow-lg px-4 py-3 flex items-start gap-3" role="alert">
+    <svg class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <div class="flex-1 text-sm">
+      <p class="font-semibold">Capture import failed</p>
+      <p>{importError}</p>
+    </div>
+    <button class="text-red-400 hover:text-red-600 text-lg leading-none" onclick={() => importError = null} aria-label="Dismiss error">✕</button>
   </div>
 {/if}

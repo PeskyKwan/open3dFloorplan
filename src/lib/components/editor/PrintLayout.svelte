@@ -112,6 +112,18 @@
       const px = wall.start.x + dx * door.position;
       const py = wall.start.y + dy * door.position;
       const hw = door.width / 2;
+      if (door.type === 'opening' || door.type === 'garage') {
+        // No swing — draw a straight line across the opening (dashed for doorways)
+        const dlen = Math.hypot(dx, dy) || 1;
+        const ux = dx / dlen, uy = dy / dlen;
+        if (door.type === 'opening') ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(px - ux * hw, py - uy * hw);
+        ctx.lineTo(px + ux * hw, py + uy * hw);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
       // Draw a gap in the wall and an arc
       ctx.beginPath();
       ctx.arc(px, py, hw, 0, Math.PI / 2);

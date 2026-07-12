@@ -6,7 +6,8 @@
  * Our coordinate system: 2D XY in centimeters (roomplan X→our X, roomplan Z→our Y)
  */
 
-import type { Floor, Wall, Door, Window, FurnitureItem, Room, Point } from '$lib/models/types';
+import type { Floor, Wall, Door, Window, FurnitureItem, Room, Point, Project } from '$lib/models/types';
+import { createDefaultProject } from '$lib/stores/project';
 
 function uid(): string {
   return Math.random().toString(36).slice(2, 10);
@@ -643,14 +644,20 @@ export function importRoomPlan(jsonData: any, options: RoomPlanImportOptions = {
   for (const ro of rpObjects) {
     if (!ro.dimensions || ro.dimensions.length < 3 || !ro.transform || ro.transform.length < 16) continue;
     const pos = getPosition(ro.transform);
-    const angle = getYRotation(ro.transform);
+    // Heading in our 2D plane: the object's local X axis projected onto the ground
+    // plane is (t[0], t[2]) — same columns the wall direction uses above. Note that
+    // mapping rpZ→ourY flips handedness, so this equals -getYRotation(): a RoomPlan
+    // Y-rotation of +a appears as plane angle -a in our coords. Our furniture
+    // `rotation` convention is atan2(dy, dx) in data coords (see snapFurnitureToWall
+    // / drawFurnitureItem), so derive it from the transform columns directly.
+    const angle2d = Math.atan2(ro.transform[2], ro.transform[0]);
     const catalogId = mapFurnitureCatalogId(ro.category, ro.dimensions);
 
     furniture.push({
       id: uid(),
       catalogId,
       position: toOurPoint(pos.x, pos.z),
-      rotation: (angle * 180) / Math.PI,
+      rotation: (angle2d * 180) / Math.PI,
       scale: { x: 1, y: 1, z: 1 },
       width: Math.round(ro.dimensions[0] * 100),
       depth: Math.round(ro.dimensions[2] * 100),
@@ -717,4 +724,38 @@ export async function extractRoomJsonFromZip(zipFile: File): Promise<any> {
 
   const content = await roomJsonFile.async('string');
   return JSON.parse(content);
+}
+
+/** Quick structural check that data looks like an Apple RoomPlan JSON export */
+export function isRoomPlanJson(data: any): boolean {
+  return !!data && Array.isArray(data.walls) && data.walls.length > 0 && !!data.walls[0]?.dimensions;
+}
+
+/** Default import options — same defaults the import options dialog starts with */
+export const DEFAULT_ROOMPLAN_OPTIONS: RoomPlanImportOptions = {
+  straighten: true,
+  orthogonal: true,
+  mergeDistance: 15,
+};
+
+/**
+ * Build a brand-new project from RoomPlan JSON data (walls/doors/windows/furniture
+ * placed on the first floor). Shared by the file-import dialog and the iOS capture
+ * handoff (`/editor?import=CODE`). Caller is responsible for loading/saving it.
+ */
+export function createProjectFromRoomPlan(
+  jsonData: any,
+  name: string,
+  options: RoomPlanImportOptions = DEFAULT_ROOMPLAN_OPTIONS
+): Project {
+  const floor = importRoomPlan(jsonData, options);
+  const project = createDefaultProject(name || 'RoomPlan Import');
+  const activeFloor = project.floors[0];
+  activeFloor.walls = floor.walls;
+  activeFloor.doors = floor.doors;
+  activeFloor.windows = floor.windows;
+  activeFloor.furniture = floor.furniture;
+  if (floor.stairs) activeFloor.stairs = floor.stairs;
+  if (floor.columns) activeFloor.columns = floor.columns;
+  return project;
 }

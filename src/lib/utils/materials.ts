@@ -14,6 +14,8 @@ export interface WallColor {
 }
 
 export const floorMaterials: FloorMaterial[] = [
+  // 'none' = no texture; floor renders as a solid color (room.color when set)
+  { id: 'none', name: 'Solid Color', color: '#e8e4dc', roughness: 0.9 },
   { id: 'light-oak', name: 'Light Oak', color: '#ddc9a8', pattern: 'hardwood', roughness: 0.8 },
   { id: 'walnut', name: 'Walnut', color: '#8b6f47', pattern: 'hardwood', roughness: 0.8 },
   { id: 'bamboo', name: 'Bamboo', color: '#e6d3a7', pattern: 'bamboo', roughness: 0.7 },
@@ -67,7 +69,8 @@ export function getMaterial(id: string): FloorMaterial {
   };
   
   const materialId = legacyMap[id] || id;
-  return floorMaterials.find(m => m.id === materialId) ?? floorMaterials[0];
+  return floorMaterials.find(m => m.id === materialId)
+    ?? floorMaterials.find(m => m.id === 'light-oak')!;
 }
 
 export function getWallColor(id: string): WallColor {

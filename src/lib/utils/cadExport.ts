@@ -107,6 +107,24 @@ export function exportDXF(project: Project) {
     // Door width as radius
     const r = door.width / 2;
 
+    // Openings and garage doors have no swing arc
+    if (door.type === 'opening' || door.type === 'garage') {
+      const ux = wdx / wlen, uy = -wdy / wlen; // CAD y is flipped
+      if (door.type === 'garage') {
+        // Panel line across the opening
+        d.drawLine(hx - ux * r, hy - uy * r, hx + ux * r, hy + uy * r);
+      } else {
+        // Doorway: jamb ticks at each side of the opening
+        const nxc = -uy, nyc = ux;
+        const jamb = (wall.thickness ?? 10) / 2 + 2;
+        for (const sign of [-1, 1]) {
+          const jx = hx + ux * r * sign, jy = hy + uy * r * sign;
+          d.drawLine(jx + nxc * jamb, jy + nyc * jamb, jx - nxc * jamb, jy - nyc * jamb);
+        }
+      }
+      continue;
+    }
+
     // Wall angle in degrees
     const wallAngle = Math.atan2(-wdy, wdx) * (180 / Math.PI);
 
