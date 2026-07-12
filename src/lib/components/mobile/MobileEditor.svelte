@@ -45,6 +45,17 @@
   function wallLen(w: any) { return Math.round(Math.hypot(w.end.x - w.start.x, w.end.y - w.start.y)); }
   function setThickness(v: number) { if (selWall) updateWall(selWall.id, { thickness: Math.max(1, Math.round(v)) }); }
   function nudgeThk(d: number) { if (selWall) setThickness((selWall.thickness ?? 15) + d); }
+  function setHeight(v: number) { if (selWall) updateWall(selWall.id, { height: Math.max(50, Math.round(v)) }); }
+  function nudgeHgt(d: number) { if (selWall) setHeight((selWall.height ?? 260) + d); }
+  /** Apply the selected wall's height to EVERY wall on the floor (fix a mis-scanned ceiling in one go). */
+  function applyHeightAll() {
+    if (!selWall || !floor) return;
+    const h = Math.round(selWall.height ?? 260);
+    for (const w of floor.walls) updateWall(w.id, { height: h });
+    heightAllMsg = `✓ ${floor.walls.length} 幅牆全部改咗 ${h}cm 高`;
+    setTimeout(() => { heightAllMsg = ''; }, 2500);
+  }
+  let heightAllMsg = $state('');
   function delWall() { if (selWall) { removeElement(selWall.id); selectedElementId.set(null); } }
 
   // Empty project → show the big scan call-to-action over the canvas
@@ -311,13 +322,26 @@
             </button>
           </div>
         </div>
-        <div class="text-[13px] text-slate-500 mb-1.5">牆厚 Thickness (cm)</div>
-        <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12 mb-1.5">
-          <button onclick={() => nudgeThk(-1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thinner">−</button>
-          <input type="number" inputmode="numeric" value={Math.round(selWall.thickness ?? 15)} onchange={(e) => setThickness(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
-          <button onclick={() => nudgeThk(1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thicker">+</button>
+        <div class="grid grid-cols-2 gap-3 mb-1.5">
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">牆厚 Thickness (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => nudgeThk(-1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thinner">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selWall.thickness ?? 15)} onchange={(e) => setThickness(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => nudgeThk(1)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Thicker">+</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">牆高 Height (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => nudgeHgt(-5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Lower">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selWall.height ?? 260)} onchange={(e) => setHeight(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => nudgeHgt(5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Higher">+</button>
+            </div>
+          </div>
         </div>
-        <div class="text-[13px] text-slate-500 text-center">掃描量唔到牆厚,預設 15cm — 度返實際改</div>
+        <button onclick={applyHeightAll} class="w-full h-11 rounded-xl bg-[#12233c] active:bg-[#16304f] text-[#5b9bf6] text-[14px] font-semibold mb-1.5">呢個高度套用去全部牆</button>
+        <div class="text-[13px] text-slate-500 text-center">{heightAllMsg || '掃描量唔到牆厚,預設 15cm — 度返實際改;高度睇 3D 先覺'}</div>
       </div>
     {/if}
   </div>

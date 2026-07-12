@@ -2453,9 +2453,13 @@
           selectedRoomId.set(room.id);
           selectedElementId.set(null);
           selectedElementIds.set(new Set());
-          // Start room drag (moves all the room's walls). Locked in Simple mode so a tap
-          // on the floor can't drag the whole room. Snapshot pre-drag for undo.
-          if (!currentSimpleMode) {
+          // Touch: one-finger drag on the room floor pans the plan (like every map app).
+          // Room-drag (moving the whole room) stays a mouse/desktop gesture.
+          if ((e as PointerEvent).pointerType === 'touch') {
+            isPanning = true;
+            panStartX = e.clientX;
+            panStartY = e.clientY;
+          } else if (!currentSimpleMode) {
             commitFurnitureMove();
             draggingRoomId = room.id;
             roomDragStartMouse = { x: wp.x, y: wp.y };
@@ -2466,14 +2470,21 @@
             }
           }
         } else {
-          // Empty space — start marquee selection
-          marqueeStart = { ...wp };
-          marqueeEnd = { ...wp };
           if (!e.shiftKey) {
             selectedElementId.set(null);
             selectedElementIds.set(new Set());
           }
           selectedRoomId.set(null);
+          if ((e as PointerEvent).pointerType === 'touch') {
+            // Touch: one-finger drag on empty space pans the plan
+            isPanning = true;
+            panStartX = e.clientX;
+            panStartY = e.clientY;
+          } else {
+            // Mouse: empty space starts marquee selection
+            marqueeStart = { ...wp };
+            marqueeEnd = { ...wp };
+          }
         }
       }
     } else if (tool === 'door') {
