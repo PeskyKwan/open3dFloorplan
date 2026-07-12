@@ -7,6 +7,7 @@
     moveFurniture, commitFurnitureMove, detectedRoomsStore, canvasCamX, canvasCamY,
     undo, redo, selectedTool, placingStair, cancelPlacement,
     loadProject, createDefaultProject, canvasZoom, updateWall, removeElement,
+    updateDoor, updateWindow,
   } from '$lib/stores/project';
   import { furnitureCatalog, getCatalogItem } from '$lib/utils/furnitureCatalog';
   import type { FurnitureDef } from '$lib/utils/furnitureCatalog';
@@ -57,6 +58,25 @@
   }
   let heightAllMsg = $state('');
   function delWall() { if (selWall) { removeElement(selWall.id); selectedElementId.set(null); } }
+
+  // Currently selected door / window
+  let selDoor = $derived(
+    floor && selId ? floor.doors.find((d: any) => d.id === selId) ?? null : null
+  );
+  let selWin = $derived(
+    floor && selId ? floor.windows.find((w: any) => w.id === selId) ?? null : null
+  );
+  const doorTypes: Array<{ v: string; label: string }> = [
+    { v: 'single', label: '單掩門' }, { v: 'double', label: '雙掩門' }, { v: 'sliding', label: '趟門' },
+    { v: 'french', label: '法式門' }, { v: 'pocket', label: '暗藏趟門' }, { v: 'bifold', label: '摺門' },
+    { v: 'opening', label: '冇門淨開口' }, { v: 'garage', label: '車房門' },
+  ];
+  function setDoorW(v: number) { if (selDoor) updateDoor(selDoor.id, { width: Math.max(30, Math.round(v)) }); }
+  function setDoorH(v: number) { if (selDoor) updateDoor(selDoor.id, { height: Math.max(50, Math.round(v)) }); }
+  function setWinW(v: number) { if (selWin) updateWindow(selWin.id, { width: Math.max(20, Math.round(v)) }); }
+  function setWinH(v: number) { if (selWin) updateWindow(selWin.id, { height: Math.max(20, Math.round(v)) }); }
+  function setWinSill(v: number) { if (selWin) updateWindow(selWin.id, { sillHeight: Math.max(0, Math.round(v)) }); }
+  function delSel() { if (selId) { removeElement(selId); selectedElementId.set(null); } }
 
   // Empty project → show the big scan call-to-action over the canvas
   let hasContent = $derived(
@@ -353,6 +373,86 @@
         </div>
         <button onclick={applyHeightAll} class="w-full h-11 rounded-xl bg-[#12233c] active:bg-[#16304f] text-[#5b9bf6] text-[14px] font-semibold mb-1.5">呢個高度套用去全部牆</button>
         <div class="text-[13px] text-slate-500 text-center">{heightAllMsg || '掃描量唔到牆厚,預設 15cm — 度返實際改;高度睇 3D 先覺'}</div>
+      </div>
+    {:else if mode === '2d' && selDoor}
+      <div class="absolute left-2 right-2 bottom-2 bg-[#141b23] rounded-2xl p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-lg font-semibold text-white">🚪 門 Door</span>
+          <div class="ml-auto flex gap-2">
+            <button onclick={delSel} class="w-11 h-11 rounded-full bg-[#2a1416] text-[#f0787a] flex items-center justify-center active:bg-[#3a1a1c]" aria-label="Delete door">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+            <button onclick={deselect} class="w-11 h-11 rounded-full bg-[#1c2530] text-slate-200 flex items-center justify-center active:bg-[#26313d]" aria-label="Deselect">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 mb-2.5">
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">闊 Width (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => setDoorW(selDoor.width - 5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Door narrower">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selDoor.width)} onchange={(e) => setDoorW(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => setDoorW(selDoor.width + 5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Door wider">+</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">高 Height (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => setDoorH(selDoor.height - 5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Door shorter">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selDoor.height)} onchange={(e) => setDoorH(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => setDoorH(selDoor.height + 5)} class="w-12 h-full text-2xl text-slate-400 active:bg-white/5" aria-label="Door taller">+</button>
+            </div>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <select value={selDoor.type} onchange={(e) => updateDoor(selDoor.id, { type: (e.target as HTMLSelectElement).value as any })} class="flex-1 px-3 h-11 bg-[#0b0f14] rounded-xl text-[14px] text-white outline-none">
+            {#each doorTypes as t}<option value={t.v}>{t.label}</option>{/each}
+          </select>
+          <button onclick={() => updateDoor(selDoor.id, { swingDirection: selDoor.swingDirection === 'left' ? 'right' : 'left' })} class="h-11 px-3 rounded-xl bg-[#1c2530] text-slate-100 text-[14px] font-medium active:bg-[#26313d]">換開邊</button>
+          <button onclick={() => updateDoor(selDoor.id, { flipSide: !selDoor.flipSide })} class="h-11 px-3 rounded-xl bg-[#1c2530] text-slate-100 text-[14px] font-medium active:bg-[#26313d]">內/外</button>
+        </div>
+        <div class="text-[13px] text-slate-500 mt-2 text-center">拖道門可以沿住幅牆移位</div>
+      </div>
+    {:else if mode === '2d' && selWin}
+      <div class="absolute left-2 right-2 bottom-2 bg-[#141b23] rounded-2xl p-4">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-lg font-semibold text-white">🪟 窗 Window</span>
+          <div class="ml-auto flex gap-2">
+            <button onclick={delSel} class="w-11 h-11 rounded-full bg-[#2a1416] text-[#f0787a] flex items-center justify-center active:bg-[#3a1a1c]" aria-label="Delete window">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+            <button onclick={deselect} class="w-11 h-11 rounded-full bg-[#1c2530] text-slate-200 flex items-center justify-center active:bg-[#26313d]" aria-label="Deselect">
+              <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">闊 (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => setWinW(selWin.width - 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Window narrower">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selWin.width)} onchange={(e) => setWinW(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => setWinW(selWin.width + 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Window wider">+</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">高 (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => setWinH(selWin.height - 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Window shorter">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selWin.height)} onchange={(e) => setWinH(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => setWinH(selWin.height + 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Window taller">+</button>
+            </div>
+          </div>
+          <div>
+            <div class="text-[13px] text-slate-500 mb-1.5">窗台高 (cm)</div>
+            <div class="flex items-center bg-[#0b0f14] rounded-xl overflow-hidden h-12">
+              <button onclick={() => setWinSill((selWin.sillHeight ?? 90) - 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Sill lower">−</button>
+              <input type="number" inputmode="numeric" value={Math.round(selWin.sillHeight ?? 90)} onchange={(e) => setWinSill(Number((e.target as HTMLInputElement).value))} class="flex-1 min-w-0 text-center text-base font-medium bg-transparent text-white outline-none" />
+              <button onclick={() => setWinSill((selWin.sillHeight ?? 90) + 5)} class="w-10 h-full text-xl text-slate-400 active:bg-white/5" aria-label="Sill higher">+</button>
+            </div>
+          </div>
+        </div>
       </div>
     {/if}
   </div>
