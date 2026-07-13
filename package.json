@@ -17,6 +17,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
+		"test:ai-render": "node --test functions/test/*.test.mjs",
 		"build:mobile": "vite build && cap sync ios",
 		"ios": "cap open ios"
 	},
@@ -30,6 +31,7 @@
 		"@tailwindcss/vite": "^4.1.18",
 		"@types/three": "^0.182.0",
 		"firebase": "^12.9.0",
+		"playwright": "^1.61.1",
 		"svelte": "^5.49.2",
 		"svelte-check": "^4.3.6",
 		"tailwindcss": "^4.1.18",

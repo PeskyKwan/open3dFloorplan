@@ -20,7 +20,16 @@ const server = createServer((req, res) => {
 await new Promise(r => server.listen(8899, r));
 
 const scanJson = readFileSync('./build/test-room2.json', 'utf8');
-const browser = await chromium.launch({ executablePath: process.env.PW_CHROMIUM ?? '/opt/pw-browsers/chromium' });
+const chromiumCandidates = [
+  process.env.PW_CHROMIUM,
+  '/opt/pw-browsers/chromium',
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+].filter(Boolean);
+const chromiumExecutable = chromiumCandidates.find((path) => existsSync(path));
+if (!chromiumExecutable) {
+  throw new Error(`No Chromium executable found. Checked: ${chromiumCandidates.join(', ')}`);
+}
+const browser = await chromium.launch({ executablePath: chromiumExecutable });
 const ctx = await browser.newContext({ viewport: { width: 428, height: 926 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 await ctx.addInitScript(`window.Capacitor = { isNativePlatform: () => true, Plugins: { RoomPlan: { scan: async () => ({ json: ${JSON.stringify(scanJson)} }) } } };`);
 const page = await ctx.newPage();
@@ -372,10 +381,51 @@ await check('project reopens with identical content',
   fd.walls.length === fdBefore.walls.length && fd.doors.length === fdBefore.doors.length &&
   fd.windows.length === fdBefore.windows.length && fd.furniture.length === fdBefore.furniture.length);
 
-// ═══ SCENARIO 16: 3D round-trip ═══
-console.log('\nS16 3D round-trip');
+// ═══ SCENARIO 16: 3D + secure mobile AI Render flow ═══
+console.log('\nS16 3D + AI Render mobile flow');
 await page.getByText('立體', { exact: true }).tap(); await sleep(4000);
 await check('3D loads (平面 toggle shows)', await page.getByText('平面', { exact: true }).count() > 0);
+
+let renderRequest = null;
+await page.route('https://asia-east2-openplan3d.cloudfunctions.net/aiRender', async (route) => {
+  renderRequest = {
+    authorization: route.request().headers().authorization,
+    body: route.request().postDataJSON(),
+  };
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      mimeType: 'image/png',
+      model: 'gpt-image-2',
+    }),
+  });
+});
+await page.getByLabel('Place Interior Camera').tap();
+const canvas3d = page.locator('canvas').last();
+const canvas3dBox = await canvas3d.boundingBox();
+if (canvas3dBox) {
+  await canvas3d.tap({ position: { x: canvas3dBox.width * 0.5, y: canvas3dBox.height * 0.65 } });
+  await sleep(800);
+}
+await page.getByText('✨ AI Render', { exact: true }).tap(); await sleep(400);
+const aiPanel = page.getByTestId('ai-render-panel');
+await check('AI Render bottom sheet opens on iPhone', await aiPanel.count() === 1);
+const aiPanelBox = await page.getByTestId('ai-camera-panel').boundingBox();
+await check('AI Render sheet stays inside 428×926 viewport', !!aiPanelBox && aiPanelBox.x >= 0 && aiPanelBox.y >= 0 && aiPanelBox.x + aiPanelBox.width <= 428 && aiPanelBox.y + aiPanelBox.height <= 926);
+await page.getByTestId('ai-access-code').fill('e2e-beta-code');
+await page.getByTestId('ai-access-code').locator('xpath=following-sibling::button[last()]').tap();
+await page.getByTestId('ai-render-generate').tap();
+await page.getByAltText('AI Render').waitFor({ timeout: 5000 });
+await sleep(700);
+await check('mobile app sends only beta code to secure backend', renderRequest?.authorization === 'Bearer e2e-beta-code');
+await check('draft render sends low quality + camera preview', renderRequest?.body?.quality === 'low' && renderRequest?.body?.imageDataUrl?.startsWith('data:image/png;base64,'));
+await check('mock GPT Image 2 result displays', await page.getByAltText('AI Render').count() === 1);
+const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox();
+await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);
+await page.screenshot({ path: '/tmp/e2e_ai_render_mobile.png' });
+await page.getByLabel('Close camera').tap(); await sleep(300);
 await page.getByText('平面', { exact: true }).tap(); await sleep(800);
 await check('back to 2D', await page.getByText('立體', { exact: true }).count() > 0);
 

@@ -214,3 +214,10 @@ Access is controlled by [`storage.rules`](storage.rules): public **read** and **
    ```bash
    gcloud storage buckets update gs://openplan3d.firebasestorage.app --cors-file=cors.json
    ```
+
+## ✨ Secure AI interior rendering
+
+The 3D Interior Camera can send a preview to the server-side OpenAI image
+rendering proxy and return a photorealistic concept image. The OpenAI API key is
+kept in Firebase Secret Manager—not in the browser or iOS app. Setup and deploy
+instructions: [`AI_RENDER_SETUP.md`](AI_RENDER_SETUP.md).

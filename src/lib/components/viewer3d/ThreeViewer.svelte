@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import { activeFloor, currentProject, detectedRoomsStore, selectedElementId } from '$lib/stores/project';
   import type { Floor, Wall, Door, Window as Win, Room, Stair } from '$lib/models/types';
@@ -17,6 +17,13 @@
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
+  import { viewportKind } from '$lib/stores/viewport';
+  import {
+    getAIRenderAccessToken,
+    requestAIRender,
+    saveAIRenderAccessToken,
+    type AIRenderQuality,
+  } from '$lib/services/aiRender';
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer;
@@ -113,22 +120,31 @@
   let aiRenderLighting = $state('natural daylight');
   let aiRenderMood = $state('warm and inviting');
   let aiRenderExtra = $state('');
+  let aiRenderQuality = $state<AIRenderQuality>('low');
+  const initialAIAccessCode = getAIRenderAccessToken();
+  let aiAccessCode = $state(initialAIAccessCode);
+  let aiAccessCodeVisible = $state(false);
+  let aiAccessCodeEditing = $state(!initialAIAccessCode);
+  let aiAccessCodeSaved = $state(false);
+  let aiAbortController: AbortController | null = null;
+  let aiCameraPanelEl = $state<HTMLDivElement | null>(null);
   const STYLE_OPTIONS = ['photorealistic', 'architectural visualization', 'interior design magazine', 'minimalist', 'scandinavian', 'industrial', 'mid-century modern', 'luxury'];
   const LIGHTING_OPTIONS = ['natural daylight', 'warm afternoon', 'golden hour', 'soft ambient', 'dramatic shadows', 'bright and airy', 'moody evening', 'studio lighting'];
   const MOOD_OPTIONS = ['warm and inviting', 'clean and modern', 'cozy', 'elegant', 'rustic charm', 'sophisticated', 'relaxed', 'vibrant'];
-  let aiProvider = $state<'gemini' | 'openai'>('gemini');
+  let aiProvider = $state<'gemini' | 'openai'>('openai');
   let aiModel = $state('gemini-2.5-flash-image');
   const AI_MODELS = [
     { id: 'gemini-2.5-flash-image', name: 'Nano Banana (2.5 Flash)', desc: 'Fast & efficient image gen ✓' },
     { id: 'gemini-3-pro-image-preview', name: 'Nano Banana Pro (3 Pro)', desc: 'Best quality, thinking, up to 4K ✓' },
   ];
-  let openaiModel = $state('gpt-image-1');
-  const OPENAI_MODELS = [
-    { id: 'gpt-5.2', name: 'GPT-5.2', desc: 'Latest model' },
-    { id: 'gpt-image-1', name: 'GPT Image 1', desc: 'Best image quality' },
-    { id: 'gpt-4.1', name: 'GPT-4.1', desc: 'Vision + image gen' },
-    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', desc: 'Fast & affordable' },
-  ];
+
+  function saveAIAccessCode() {
+    saveAIRenderAccessToken(aiAccessCode);
+    aiAccessCode = getAIRenderAccessToken();
+    aiAccessCodeEditing = !aiAccessCode;
+    aiAccessCodeSaved = true;
+    setTimeout(() => { aiAccessCodeSaved = false; }, 2000);
+  }
 
   function buildAIPrompt(): string {
     let prompt = `Transform this interior 3D floor plan render into a ${aiRenderStyle} image. `;
@@ -162,7 +178,9 @@
   async function runAIRender() {
     if (!scene || !interiorCamera) return;
 
-    if (aiProvider === 'gemini') {
+    // The native/phone app always uses the server-side OpenAI route so no
+    // provider API key is ever stored in the iOS bundle or WebView.
+    if (get(viewportKind) !== 'phone' && aiProvider === 'gemini') {
       await runGeminiRender();
     } else {
       await runOpenAIRender();
@@ -225,69 +243,64 @@
   }
 
   async function runOpenAIRender() {
-    const openaiKey = localStorage.getItem('o3d_openai_key');
-    if (!openaiKey) {
-      alert('Please add your OpenAI API key in Settings > AI tab first.');
+    const accessToken = aiAccessCode.trim() || getAIRenderAccessToken();
+    if (!accessToken) {
+      aiRenderError = '請先輸入 AI Render beta access code。OpenAI API key 只會放喺安全 server，唔會放入 iPhone。';
       return;
     }
     
     aiRendering = true;
     aiRenderResult = null; aiRenderError = null;
+    aiAbortController = new AbortController();
     
     try {
       const imageDataUrl = captureSceneBase64(1024, 576);
-      const base64Image = imageDataUrl.split(',')[1];
       const prompt = buildAIPrompt();
-
-      // Use OpenAI Responses API with image_generation tool
-      const requestBody = {
-        model: openaiModel,
-        input: [
-          { role: 'user', content: [
-            { type: 'input_image', image_url: `data:image/png;base64,${base64Image}` },
-            { type: 'input_text', text: prompt }
-          ]}
-        ],
-        tools: [{ type: 'image_generation', quality: 'high', size: '1536x1024' }]
-      };
-      
-      const response = await fetch('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
+      aiRenderResult = await requestAIRender({
+        imageDataUrl,
+        prompt,
+        quality: aiRenderQuality,
+        accessToken,
+        signal: aiAbortController.signal,
       });
-      
-      if (!response.ok) {
-        const err = await response.text();
-        throw new Error(`OpenAI API error: ${response.status} — ${err}`);
-      }
-      
-      const data = await response.json();
-      const imageOutput = data.output?.find((o: any) => o.type === 'image_generation_call');
-      if (imageOutput?.result) {
-        aiRenderResult = `data:image/png;base64,${imageOutput.result}`;
-      } else {
-        const textOutput = data.output?.find((o: any) => o.type === 'message');
-        const msg = textOutput?.content?.[0]?.text || JSON.stringify(data.output);
-        throw new Error(`No image returned. Response: ${msg}`);
-      }
+      await tick();
+      aiCameraPanelEl?.scrollTo({ top: aiCameraPanelEl.scrollHeight, behavior: 'smooth' });
     } catch (e: any) {
-      aiRenderError = e.message;
+      aiRenderError = e?.name === 'AbortError' ? 'Render 已取消。' : (e?.message ?? 'AI Render failed.');
     } finally {
       aiRendering = false;
+      aiAbortController = null;
     }
+  }
+
+  function cancelAIRender() {
+    aiAbortController?.abort();
   }
 
   function downloadAIRender() {
     if (!aiRenderResult) return;
     const link = document.createElement('a');
     const projectName = get(currentProject)?.name ?? 'floorplan';
-    link.download = `${projectName}-ai-render.png`;
+    const extension = aiRenderResult.startsWith('data:image/jpeg') ? 'jpg' : 'png';
+    link.download = `${projectName}-ai-render.${extension}`;
     link.href = aiRenderResult;
     link.click();
+  }
+
+  async function shareAIRender() {
+    if (!aiRenderResult) return;
+    try {
+      const blob = await (await fetch(aiRenderResult)).blob();
+      const projectName = get(currentProject)?.name ?? 'floorplan';
+      const file = new File([blob], `${projectName}-ai-render.jpg`, { type: blob.type || 'image/jpeg' });
+      if (navigator.share && (!navigator.canShare || navigator.canShare({ files: [file] }))) {
+        await navigator.share({ title: `${projectName} AI Render`, files: [file] });
+      } else {
+        downloadAIRender();
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') downloadAIRender();
+    }
   }
 
   /** Move camera in the XZ plane relative to current facing direction.
@@ -2309,14 +2322,23 @@
 
   <!-- Camera Preview Panel -->
   {#if cameraPreviewOpen && cameraPlaced}
-    <div class="absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto max-w-[calc(100vw-2rem)]" style="width: 420px; max-height: calc(100vh - 8rem);">
-      <div class="flex items-center justify-between px-3 py-2 border-b border-gray-700">
+    <div
+      bind:this={aiCameraPanelEl}
+      data-testid="ai-camera-panel"
+      class={$viewportKind === 'phone'
+        ? 'fixed inset-x-2 z-[70] bg-gray-900/98 rounded-2xl shadow-2xl backdrop-blur-sm overflow-y-auto'
+        : 'absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto max-w-[calc(100vw-2rem)]'}
+      style={$viewportKind === 'phone'
+        ? 'bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem); max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 5.5rem);'
+        : 'width: 420px; max-height: calc(100vh - 8rem);'}
+    >
+      <div class="sticky top-0 z-10 flex items-center justify-between px-3 py-2.5 border-b border-gray-700 bg-gray-900/95 backdrop-blur-sm">
         <span class="text-white text-sm font-medium">📷 Interior Camera</span>
         <div class="flex gap-2">
           <button class="text-xs text-blue-400 hover:text-blue-300" onclick={() => { aiRenderOpen = !aiRenderOpen; }}>
             {aiRenderOpen ? 'Hide AI' : '✨ AI Render'}
           </button>
-          <button class="text-gray-400 hover:text-white text-lg leading-none" onclick={() => { cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
+          <button class="text-gray-400 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
         </div>
       </div>
       <!-- Preview canvas with drag-to-rotate -->
@@ -2380,49 +2402,55 @@
 
       <!-- AI Render Section -->
       {#if aiRenderOpen}
-        <div class="border-t border-gray-700 px-3 py-3 space-y-2">
-          <div class="text-xs font-medium text-white">✨ AI Photorealistic Render</div>
-
-          <!-- Provider toggle -->
-          <div class="flex rounded-lg overflow-hidden border border-gray-700">
-            <button
-              class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'gemini' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
-              onclick={() => { aiProvider = 'gemini'; }}
-            >Gemini</button>
-            <button
-              class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'openai' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
-              onclick={() => { aiProvider = 'openai'; }}
-            >OpenAI</button>
+        <div data-testid="ai-render-panel" class="border-t border-gray-700 px-3 py-3 space-y-3">
+          <div class="flex items-center justify-between gap-2">
+            <div>
+              <div class="text-sm font-semibold text-white">✨ AI 室內效果圖</div>
+              <div class="text-[10px] text-gray-400 mt-0.5">保留間隔、傢俬位置同相機角度</div>
+            </div>
+            <span class="shrink-0 rounded-full bg-emerald-900/50 border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300">
+              {$viewportKind === 'phone' || aiProvider === 'openai' ? 'GPT Image 2' : 'Gemini'}
+            </span>
           </div>
 
-          <label class="block">
-            <span class="text-[10px] text-gray-400 block mb-1">Model</span>
-            {#if aiProvider === 'gemini'}
+          <!-- Provider toggle -->
+          {#if $viewportKind !== 'phone'}
+            <div class="flex rounded-lg overflow-hidden border border-gray-700">
+              <button
+                class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'gemini' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
+                onclick={() => { aiProvider = 'gemini'; }}
+              >Gemini</button>
+              <button
+                class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'openai' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
+                onclick={() => { aiProvider = 'openai'; }}
+              >OpenAI · Secure server</button>
+            </div>
+          {/if}
+
+          {#if $viewportKind !== 'phone' && aiProvider === 'gemini'}
+            <label class="block">
+              <span class="text-[10px] text-gray-400 block mb-1">Model</span>
               <select bind:value={aiModel} class="w-full bg-gray-800 text-gray-200 text-xs rounded px-1.5 py-1.5 border border-gray-700">
                 {#each AI_MODELS as m}<option value={m.id}>{m.name} — {m.desc}</option>{/each}
               </select>
-            {:else}
-              <select bind:value={openaiModel} class="w-full bg-gray-800 text-gray-200 text-xs rounded px-1.5 py-1.5 border border-gray-700">
-                {#each OPENAI_MODELS as m}<option value={m.id}>{m.name} — {m.desc}</option>{/each}
-              </select>
-            {/if}
-          </label>
+            </label>
+          {/if}
           
-          <div class="grid grid-cols-3 gap-2">
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <label class="block">
-              <span class="text-[10px] text-gray-400 block mb-1">Style</span>
+              <span class="text-[10px] text-gray-400 block mb-1">風格 Style</span>
               <select bind:value={aiRenderStyle} class="w-full bg-gray-800 text-gray-200 text-xs rounded px-1.5 py-1 border border-gray-700">
                 {#each STYLE_OPTIONS as opt}<option value={opt}>{opt}</option>{/each}
               </select>
             </label>
             <label class="block">
-              <span class="text-[10px] text-gray-400 block mb-1">Lighting</span>
+              <span class="text-[10px] text-gray-400 block mb-1">燈光 Lighting</span>
               <select bind:value={aiRenderLighting} class="w-full bg-gray-800 text-gray-200 text-xs rounded px-1.5 py-1 border border-gray-700">
                 {#each LIGHTING_OPTIONS as opt}<option value={opt}>{opt}</option>{/each}
               </select>
             </label>
-            <label class="block">
-              <span class="text-[10px] text-gray-400 block mb-1">Mood</span>
+            <label class="block col-span-2 sm:col-span-1">
+              <span class="text-[10px] text-gray-400 block mb-1">氣氛 Mood</span>
               <select bind:value={aiRenderMood} class="w-full bg-gray-800 text-gray-200 text-xs rounded px-1.5 py-1 border border-gray-700">
                 {#each MOOD_OPTIONS as opt}<option value={opt}>{opt}</option>{/each}
               </select>
@@ -2432,25 +2460,83 @@
           <label class="block">
             <span class="text-[10px] text-gray-400 block mb-1">Extra instructions (optional)</span>
             <input type="text" bind:value={aiRenderExtra} placeholder="e.g. hardwood floors, white marble counters..."
-              class="w-full bg-gray-800 text-gray-200 text-xs rounded px-2 py-1.5 border border-gray-700 placeholder:text-gray-600" />
+              class="w-full bg-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2.5 border border-gray-700 placeholder:text-gray-600" />
           </label>
 
+          {#if $viewportKind === 'phone' || aiProvider === 'openai'}
+            <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-2.5 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-medium text-gray-200">Private beta access code</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-[10px] {aiAccessCode ? 'text-emerald-400' : 'text-amber-400'}">{aiAccessCode ? '已設定 ✓' : '需要設定'}</span>
+                  {#if aiAccessCode && !aiAccessCodeEditing}
+                    <button class="text-[10px] text-blue-400" onclick={() => { aiAccessCodeEditing = true; }}>更改</button>
+                  {/if}
+                </div>
+              </div>
+              {#if !aiAccessCode || aiAccessCodeEditing}
+                <div class="flex gap-2">
+                  <input
+                    data-testid="ai-access-code"
+                    type={aiAccessCodeVisible ? 'text' : 'password'}
+                    bind:value={aiAccessCode}
+                    placeholder="由 OpenPlan3D beta 提供"
+                    autocomplete="off"
+                    class="min-w-0 flex-1 bg-gray-900 text-gray-100 text-sm rounded-lg px-3 py-2 border border-gray-700 placeholder:text-gray-600"
+                  />
+                  <button class="px-3 rounded-lg bg-gray-700 text-xs text-gray-200" onclick={() => { aiAccessCodeVisible = !aiAccessCodeVisible; }} aria-label="Show or hide access code">
+                    {aiAccessCodeVisible ? '隱藏' : '顯示'}
+                  </button>
+                  <button class="px-3 rounded-lg bg-blue-600 text-xs font-medium text-white" onclick={saveAIAccessCode}>
+                    {aiAccessCodeSaved ? '✓' : '儲存'}
+                  </button>
+                </div>
+              {/if}
+              <p class="text-[10px] leading-relaxed text-gray-500">真正 OpenAI API key 只保存在 Firebase server；iPhone 冇 API key。</p>
+            </div>
+
+            <div>
+              <span class="text-[10px] text-gray-400 block mb-1.5">輸出質素</span>
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  class="rounded-lg border px-3 py-2 text-left {aiRenderQuality === 'low' ? 'border-blue-500 bg-blue-900/30 text-blue-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
+                  onclick={() => { aiRenderQuality = 'low'; }}
+                >
+                  <span class="block text-xs font-medium">快速草圖</span>
+                  <span class="block text-[10px] opacity-70 mt-0.5">平啲，先試風格</span>
+                </button>
+                <button
+                  class="rounded-lg border px-3 py-2 text-left {aiRenderQuality === 'high' ? 'border-purple-500 bg-purple-900/30 text-purple-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
+                  onclick={() => { aiRenderQuality = 'high'; }}
+                >
+                  <span class="block text-xs font-medium">高清效果圖</span>
+                  <span class="block text-[10px] opacity-70 mt-0.5">貴啲，最後先用</span>
+                </button>
+              </div>
+            </div>
+          {/if}
+
           <details class="text-[10px] text-gray-500">
-            <summary class="cursor-pointer hover:text-gray-400">View full prompt</summary>
+            <summary class="cursor-pointer hover:text-gray-400">睇完整 AI 指示</summary>
             <p class="mt-1 p-2 bg-gray-800 rounded text-gray-400 leading-relaxed">{buildAIPrompt()}</p>
           </details>
 
           <button
-            class="w-full px-3 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            data-testid="ai-render-generate"
+            class="w-full min-h-12 px-3 py-2.5 bg-purple-600 text-white text-sm font-semibold rounded-xl hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             onclick={runAIRender}
             disabled={aiRendering}
           >
             {#if aiRendering}
               <span class="animate-spin">⏳</span> Rendering...
             {:else}
-              ✨ Generate Photorealistic Render
+              ✨ 生成室內效果圖
             {/if}
           </button>
+
+          {#if aiRendering}
+            <button class="w-full text-xs text-gray-400 py-1" onclick={cancelAIRender}>取消 render</button>
+          {/if}
 
           {#if aiRenderError}
             <div class="bg-red-900/30 border border-red-700 rounded-lg p-3 space-y-2">
@@ -2464,14 +2550,12 @@
           {/if}
 
           {#if aiRenderResult}
-            <div class="space-y-2">
+            <div data-testid="ai-render-result" class="space-y-2">
               <img src={aiRenderResult} alt="AI Render" class="w-full rounded-lg" />
-              <button
-                class="w-full px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500 transition-colors"
-                onclick={downloadAIRender}
-              >
-                💾 Download Render
-              </button>
+              <div class="grid grid-cols-2 gap-2">
+                <button class="px-3 py-2.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500 transition-colors" onclick={shareAIRender}>↗ 分享 / 儲存</button>
+                <button class="px-3 py-2.5 bg-gray-700 text-gray-200 text-sm rounded-lg hover:bg-gray-600 transition-colors" onclick={() => { aiRenderResult = null; }}>再整一張</button>
+              </div>
             </div>
           {/if}
         </div>
