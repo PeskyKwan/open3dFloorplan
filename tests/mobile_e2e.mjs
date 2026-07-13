@@ -387,7 +387,7 @@ await page.getByText('立體', { exact: true }).tap(); await sleep(4000);
 await check('3D loads (平面 toggle shows)', await page.getByText('平面', { exact: true }).count() > 0);
 
 let renderRequest = null;
-await page.route('https://asia-east2-openplan3d.cloudfunctions.net/aiRender', async (route) => {
+await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender', async (route) => {
   renderRequest = {
     authorization: route.request().headers().authorization,
     body: route.request().postDataJSON(),

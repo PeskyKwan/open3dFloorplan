@@ -1,5 +1,5 @@
 const DEFAULT_AI_RENDER_ENDPOINT =
-  'https://asia-east2-openplan3d.cloudfunctions.net/aiRender';
+  'https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender';
 
 export const AI_RENDER_ACCESS_TOKEN_KEY = 'o3d_ai_render_access_token';
 

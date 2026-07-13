@@ -38,6 +38,9 @@ export const aiRender = onRequest({
   region: 'asia-east2',
   timeoutSeconds: 180,
   memory: '1GiB',
+  minInstances: 0,
+  maxInstances: 1,
+  concurrency: 1,
   cors: false,
   secrets: [OPENAI_API_KEY, AI_RENDER_ACCESS_TOKEN],
 }, async (req, res) => {

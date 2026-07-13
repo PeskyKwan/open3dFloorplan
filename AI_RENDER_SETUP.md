@@ -14,6 +14,8 @@ WebView.
 - The beta access code protects the private endpoint. It is intentionally
   separate from the OpenAI credential, so it can be rotated without rotating
   the billing key.
+- The Firebase function is capped at one instance and one concurrent render,
+  with zero warm instances when idle, to limit private-beta cloud exposure.
 
 ## One-time owner setup
 
@@ -53,7 +55,7 @@ WebView.
 
 The mobile build defaults to:
 
-`https://asia-east2-openplan3d.cloudfunctions.net/aiRender`
+`https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender`
 
 Override it at build time when needed:
 
