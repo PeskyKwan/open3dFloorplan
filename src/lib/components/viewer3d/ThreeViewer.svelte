@@ -79,6 +79,7 @@
 
   // Lighting controls state
   let lightingPanelOpen = $state(false);
+  let mobileViewMenuOpen = $state(false);
   let sunAzimuth = $state(135);      // 0-360 degrees
   let sunElevation = $state(60);     // 0-90 degrees
   let ambientIntensity = $state(0.35);
@@ -541,6 +542,30 @@
   let floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y=0 plane
   let ghostIntersection = new THREE.Vector3();
 
+  /** Phone entry point: one clear AI action, then one tap inside the room. */
+  export function startMobileAIRender() {
+    mobileViewMenuOpen = false;
+    lightingPanelOpen = false;
+    furniturePlacementMode = false;
+    furniturePickerOpen = false;
+    selectedCatalogId = null;
+    if (walkthroughMode) exitWalkthroughMode();
+
+    aiRenderOpen = true;
+    aiRenderError = null;
+    if (cameraPlaced) {
+      cameraPlacementMode = false;
+      cameraPreviewOpen = true;
+      cameraPreviewDirty = true;
+      return;
+    }
+
+    cameraPlacementMode = true;
+    cameraPreviewOpen = false;
+    cameraPlaced = false;
+    editMode = true; // enables the scene tap handler; disabled after placement on phone
+  }
+
   const TIME_PRESETS = {
     morning: { azimuth: 90, elevation: 25, ambient: 0.3, sunColor: 0xffe0a0, sunIntensity: 0.8, skyTop: '#f5a86c', skyMid: '#fdd89b', skyHorizon: '#ffe8c0', hemiSky: '#fdd89b', hemiGround: '#9b8060' },
     noon:    { azimuth: 180, elevation: 80, ambient: 0.45, sunColor: 0xffffff, sunIntensity: 1.2, skyTop: '#3a7bd5', skyMid: '#87ceeb', skyHorizon: '#c8e8f8', hemiSky: '#87ceeb', hemiGround: '#8b7355' },
@@ -750,8 +775,16 @@
           if (!cameraPlaced) {
             // First click: place camera position
             cameraPosition = { x: hit.x, y: cameraHeight, z: hit.z };
-            cameraLookAt = { x: hit.x + 200, y: cameraHeight * 0.75, z: hit.z };
-            cameraBaseDir = { x: 1, z: 0 };
+            const viewTarget = controls?.target;
+            const targetDX = (viewTarget?.x ?? hit.x + 200) - hit.x;
+            const targetDZ = (viewTarget?.z ?? hit.z) - hit.z;
+            const targetLen = Math.hypot(targetDX, targetDZ) || 1;
+            cameraBaseDir = { x: targetDX / targetLen, z: targetDZ / targetLen };
+            cameraLookAt = {
+              x: hit.x + cameraBaseDir.x * 200,
+              y: cameraHeight * 0.75,
+              z: hit.z + cameraBaseDir.z * 200,
+            };
             cameraYaw = 0;
             cameraPitch = 0;
             cameraPlaced = true;
@@ -759,6 +792,11 @@
             createCameraMarker(new THREE.Vector3(hit.x, 0, hit.z), new THREE.Vector3(hit.x + 200, 0, hit.z));
             cameraPreviewOpen = true;
             cameraPreviewDirty = true;
+            if (get(viewportKind) === 'phone') {
+              cameraPlacementMode = false;
+              editMode = false;
+              aiRenderOpen = true;
+            }
           } else {
             // Second click: set look-at direction
             cameraLookAt = { x: hit.x, y: cameraHeight * 0.75, z: hit.z };
@@ -2189,7 +2227,55 @@
 </script>
 
 <div bind:this={container} class="w-full h-full relative">
-  <!-- 3D Toolbar Row -->
+  {#if $viewportKind === 'phone'}
+    <!-- Phone: one labelled entry; secondary controls use grouped disclosure. -->
+    <button
+      onclick={() => { mobileViewMenuOpen = !mobileViewMenuOpen; }}
+      class="absolute top-3 right-3 z-50 h-12 px-4 rounded-2xl bg-[#121a24]/95 text-white text-[15px] font-semibold shadow-lg flex items-center gap-2 active:bg-[#202c39]"
+      aria-label="3D 視圖選項"
+    >
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+      視圖
+    </button>
+
+    {#if mobileViewMenuOpen}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="absolute inset-0 z-[55] bg-black/45" onclick={() => { mobileViewMenuOpen = false; }}></div>
+      <div class="absolute inset-x-2 bottom-2 z-[60] rounded-3xl bg-[#141b23] p-4 shadow-2xl">
+        <div class="flex items-center mb-3">
+          <div>
+            <div class="text-[18px] font-bold text-white">3D 視圖</div>
+            <div class="text-[14px] text-slate-400 mt-0.5">揀一個需要嘅工具</div>
+          </div>
+          <button onclick={() => { mobileViewMenuOpen = false; }} class="ml-auto w-11 h-11 rounded-full bg-[#222d39] text-white text-lg" aria-label="關閉視圖選項">✕</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <button onclick={() => { viewTopDown(); mobileViewMenuOpen = false; }} class="min-h-20 rounded-2xl bg-[#0d131a] p-3 text-left active:bg-[#202c39]">
+            <span class="block text-[17px] font-semibold text-white">◎ 俯視</span>
+            <span class="block text-[14px] text-slate-400 mt-1">由上向下睇</span>
+          </button>
+          <button onclick={() => { toggleWallTransparency(); }} class="min-h-20 rounded-2xl p-3 text-left active:bg-[#202c39] {wallsTransparent ? 'bg-[#18375e]' : 'bg-[#0d131a]'}">
+            <span class="block text-[17px] font-semibold text-white">▦ 透明牆</span>
+            <span class="block text-[14px] text-slate-400 mt-1">{wallsTransparent ? '已開 ✓' : '睇清室內'}</span>
+          </button>
+          <button onclick={() => { showAllFloors = !showAllFloors; rebuildScene(); }} class="min-h-20 rounded-2xl p-3 text-left active:bg-[#202c39] {showAllFloors ? 'bg-[#30225d]' : 'bg-[#0d131a]'}">
+            <span class="block text-[17px] font-semibold text-white">▤ 樓層</span>
+            <span class="block text-[14px] text-slate-400 mt-1">{showAllFloors ? '全部樓層 ✓' : '目前樓層'}</span>
+          </button>
+          <button onclick={() => { lightingPanelOpen = true; mobileViewMenuOpen = false; }} class="min-h-20 rounded-2xl bg-[#0d131a] p-3 text-left active:bg-[#202c39]">
+            <span class="block text-[17px] font-semibold text-white">☀ 光線</span>
+            <span class="block text-[14px] text-slate-400 mt-1">早、午、黃昏、夜</span>
+          </button>
+          <button onclick={() => { takeScreenshot(); mobileViewMenuOpen = false; }} class="min-h-20 rounded-2xl bg-[#0d131a] p-3 text-left active:bg-[#202c39]">
+            <span class="block text-[17px] font-semibold text-white">▣ 儲存圖片</span>
+            <span class="block text-[14px] text-slate-400 mt-1">目前 3D 畫面</span>
+          </button>
+        </div>
+      </div>
+    {/if}
+  {:else}
+  <!-- Desktop 3D toolbar -->
   <div class="absolute top-4 right-4 z-50 flex gap-1.5">
     <!-- Multi-Floor Stacking Toggle -->
     <button
@@ -2308,11 +2394,14 @@
       </svg>
     {/if}
     </button>
-  </div><!-- end 3D toolbar row -->
+  </div><!-- end desktop 3D toolbar row -->
+  {/if}
 
   {#if cameraPlacementMode && !cameraPlaced}
-    <div class="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-black/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm">
-      📷 Click on the floor to place camera position
+    <div class={$viewportKind === 'phone'
+      ? 'absolute top-20 inset-x-3 z-50 bg-[#112b4d]/95 text-white px-4 py-4 rounded-2xl text-[16px] font-semibold text-center shadow-xl'
+      : 'absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-black/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm'}>
+      {$viewportKind === 'phone' ? '撳房間入面一個位置，開始 AI Render' : '📷 Click on the floor to place camera position'}
     </div>
   {:else if cameraPlacementMode && cameraPlaced}
     <div class="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-black/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm">
@@ -2326,19 +2415,21 @@
       bind:this={aiCameraPanelEl}
       data-testid="ai-camera-panel"
       class={$viewportKind === 'phone'
-        ? 'fixed inset-x-2 z-[70] bg-gray-900/98 rounded-2xl shadow-2xl backdrop-blur-sm overflow-y-auto'
+        ? 'fixed inset-x-2 z-[70] bg-[#101720]/[0.99] rounded-3xl shadow-2xl overflow-y-auto'
         : 'absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto max-w-[calc(100vw-2rem)]'}
       style={$viewportKind === 'phone'
-        ? 'bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem); max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 5.5rem);'
+        ? 'top: calc(env(safe-area-inset-top, 0px) + 0.5rem); bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);'
         : 'width: 420px; max-height: calc(100vh - 8rem);'}
     >
-      <div class="sticky top-0 z-10 flex items-center justify-between px-3 py-2.5 border-b border-gray-700 bg-gray-900/95 backdrop-blur-sm">
-        <span class="text-white text-sm font-medium">📷 Interior Camera</span>
+      <div class="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#101720]/95 backdrop-blur-sm">
+        <span class="text-white {$viewportKind === 'phone' ? 'text-[18px] font-bold' : 'text-sm font-medium'}">{$viewportKind === 'phone' ? '✨ AI Render' : '📷 Interior Camera'}</span>
         <div class="flex gap-2">
-          <button class="text-xs text-blue-400 hover:text-blue-300" onclick={() => { aiRenderOpen = !aiRenderOpen; }}>
-            {aiRenderOpen ? 'Hide AI' : '✨ AI Render'}
-          </button>
-          <button class="text-gray-400 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
+          {#if $viewportKind !== 'phone'}
+            <button class="text-xs text-blue-400 hover:text-blue-300" onclick={() => { aiRenderOpen = !aiRenderOpen; }}>
+              {aiRenderOpen ? 'Hide AI' : '✨ AI Render'}
+            </button>
+          {/if}
+          <button class="w-10 h-10 rounded-full bg-gray-800 text-gray-300 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
         </div>
       </div>
       <!-- Preview canvas with drag-to-rotate -->
@@ -2353,7 +2444,7 @@
       </div>
 
       <!-- Movement arrows -->
-      <div class="flex items-center justify-center gap-1 py-1.5 border-b border-gray-800">
+      <div class="{$viewportKind === 'phone' ? 'hidden' : 'flex'} items-center justify-center gap-1 py-1.5 border-b border-gray-800">
         <span class="text-[10px] text-gray-500 mr-2">Move:</span>
         <button class="w-7 h-7 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs flex items-center justify-center" onclick={() => moveCameraRelative(0, -10)} title="Move left">←</button>
         <div class="flex flex-col gap-0.5">
@@ -2363,7 +2454,7 @@
         <button class="w-7 h-7 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs flex items-center justify-center" onclick={() => moveCameraRelative(0, 10)} title="Move right">→</button>
       </div>
 
-      <div class="px-3 py-2 space-y-1.5">
+      <div class="{$viewportKind === 'phone' ? 'hidden' : 'block'} px-3 py-2 space-y-1.5">
         <label class="flex items-center justify-between text-xs text-gray-300">
           <span>FOV</span>
           <div class="flex items-center gap-2">
@@ -2400,13 +2491,22 @@
         </div>
       </div>
 
+      {#if $viewportKind === 'phone'}
+        <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
+          <div class="flex-1 text-[14px] text-slate-300">拖動畫面調整方向</div>
+          <button class="h-11 px-4 rounded-xl bg-[#222d39] text-[14px] font-semibold text-white" onclick={() => { cameraPlacementMode = true; cameraPlaced = false; cameraPreviewOpen = false; editMode = true; }}>
+            重新選位
+          </button>
+        </div>
+      {/if}
+
       <!-- AI Render Section -->
       {#if aiRenderOpen}
-        <div data-testid="ai-render-panel" class="border-t border-gray-700 px-3 py-3 space-y-3">
+        <div data-testid="ai-render-panel" class="border-t border-gray-700 {$viewportKind === 'phone' ? 'px-4 py-4 space-y-4' : 'px-3 py-3 space-y-3'}">
           <div class="flex items-center justify-between gap-2">
             <div>
-              <div class="text-sm font-semibold text-white">✨ AI 室內效果圖</div>
-              <div class="text-[10px] text-gray-400 mt-0.5">保留間隔、傢俬位置同相機角度</div>
+              <div class="{$viewportKind === 'phone' ? 'text-[17px]' : 'text-sm'} font-semibold text-white">揀一個風格</div>
+              <div class="{$viewportKind === 'phone' ? 'text-[13px]' : 'text-[10px]'} text-gray-400 mt-0.5">保留間隔、傢俬同相機角度</div>
             </div>
             <span class="shrink-0 rounded-full bg-emerald-900/50 border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300">
               {$viewportKind === 'phone' || aiProvider === 'openai' ? 'GPT Image 2' : 'Gemini'}
@@ -2436,6 +2536,40 @@
             </label>
           {/if}
           
+          {#if $viewportKind === 'phone'}
+            <div class="grid grid-cols-3 gap-2">
+              <button onclick={() => { aiRenderStyle = 'photorealistic'; }} class="min-h-16 rounded-2xl border p-2 text-center {aiRenderStyle === 'photorealistic' ? 'border-blue-400 bg-blue-900/40 text-white' : 'border-gray-700 bg-gray-800 text-gray-300'}">
+                <span class="block text-xl">🏠</span><span class="block text-[14px] font-semibold mt-1">真實</span>
+              </button>
+              <button onclick={() => { aiRenderStyle = 'scandinavian'; }} class="min-h-16 rounded-2xl border p-2 text-center {aiRenderStyle === 'scandinavian' ? 'border-blue-400 bg-blue-900/40 text-white' : 'border-gray-700 bg-gray-800 text-gray-300'}">
+                <span class="block text-xl">🌿</span><span class="block text-[14px] font-semibold mt-1">北歐</span>
+              </button>
+              <button onclick={() => { aiRenderStyle = 'luxury'; }} class="min-h-16 rounded-2xl border p-2 text-center {aiRenderStyle === 'luxury' ? 'border-blue-400 bg-blue-900/40 text-white' : 'border-gray-700 bg-gray-800 text-gray-300'}">
+                <span class="block text-xl">✨</span><span class="block text-[14px] font-semibold mt-1">豪華</span>
+              </button>
+            </div>
+            <details class="rounded-2xl bg-gray-800/70 border border-gray-700 px-3 py-2 text-gray-300">
+              <summary class="min-h-10 flex items-center cursor-pointer text-[15px] font-semibold">進階設定</summary>
+              <div class="grid grid-cols-2 gap-2 pt-2">
+                <label class="block">
+                  <span class="text-[12px] text-gray-400 block mb-1">燈光</span>
+                  <select bind:value={aiRenderLighting} class="w-full h-11 bg-gray-900 text-gray-200 text-[14px] rounded-xl px-2 border border-gray-700">
+                    {#each LIGHTING_OPTIONS as opt}<option value={opt}>{opt}</option>{/each}
+                  </select>
+                </label>
+                <label class="block">
+                  <span class="text-[12px] text-gray-400 block mb-1">氣氛</span>
+                  <select bind:value={aiRenderMood} class="w-full h-11 bg-gray-900 text-gray-200 text-[14px] rounded-xl px-2 border border-gray-700">
+                    {#each MOOD_OPTIONS as opt}<option value={opt}>{opt}</option>{/each}
+                  </select>
+                </label>
+                <label class="block col-span-2">
+                  <span class="text-[12px] text-gray-400 block mb-1">其他要求（可選）</span>
+                  <input type="text" bind:value={aiRenderExtra} placeholder="例：木地板、白色雲石…" class="w-full h-12 bg-gray-900 text-gray-200 text-[15px] rounded-xl px-3 border border-gray-700 placeholder:text-gray-600" />
+                </label>
+              </div>
+            </details>
+          {:else}
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <label class="block">
               <span class="text-[10px] text-gray-400 block mb-1">風格 Style</span>
@@ -2462,15 +2596,16 @@
             <input type="text" bind:value={aiRenderExtra} placeholder="e.g. hardwood floors, white marble counters..."
               class="w-full bg-gray-800 text-gray-200 text-sm rounded-lg px-3 py-2.5 border border-gray-700 placeholder:text-gray-600" />
           </label>
+          {/if}
 
           {#if $viewportKind === 'phone' || aiProvider === 'openai'}
-            <div class="rounded-xl border border-gray-700 bg-gray-800/60 p-2.5 space-y-2">
+            <div class="rounded-2xl border border-gray-700 bg-gray-800/60 {$viewportKind === 'phone' ? 'p-3 space-y-3' : 'p-2.5 space-y-2'}">
               <div class="flex items-center justify-between">
-                <span class="text-[11px] font-medium text-gray-200">Private beta access code</span>
+                <span class="{$viewportKind === 'phone' ? 'text-[14px]' : 'text-[11px]'} font-medium text-gray-200">Beta access code</span>
                 <div class="flex items-center gap-2">
-                  <span class="text-[10px] {aiAccessCode ? 'text-emerald-400' : 'text-amber-400'}">{aiAccessCode ? '已設定 ✓' : '需要設定'}</span>
+                  <span class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} {aiAccessCode ? 'text-emerald-400' : 'text-amber-400'}">{aiAccessCode ? '已設定 ✓' : '需要設定'}</span>
                   {#if aiAccessCode && !aiAccessCodeEditing}
-                    <button class="text-[10px] text-blue-400" onclick={() => { aiAccessCodeEditing = true; }}>更改</button>
+                  <button class="{$viewportKind === 'phone' ? 'text-[13px]' : 'text-[10px]'} text-blue-400" onclick={() => { aiAccessCodeEditing = true; }}>更改</button>
                   {/if}
                 </div>
               </div>
@@ -2482,48 +2617,50 @@
                     bind:value={aiAccessCode}
                     placeholder="由 OpenPlan3D beta 提供"
                     autocomplete="off"
-                    class="min-w-0 flex-1 bg-gray-900 text-gray-100 text-sm rounded-lg px-3 py-2 border border-gray-700 placeholder:text-gray-600"
+                    class="min-w-0 flex-1 bg-gray-900 text-gray-100 text-sm rounded-xl px-3 h-12 border border-gray-700 placeholder:text-gray-600"
                   />
-                  <button class="px-3 rounded-lg bg-gray-700 text-xs text-gray-200" onclick={() => { aiAccessCodeVisible = !aiAccessCodeVisible; }} aria-label="Show or hide access code">
-                    {aiAccessCodeVisible ? '隱藏' : '顯示'}
-                  </button>
-                  <button class="px-3 rounded-lg bg-blue-600 text-xs font-medium text-white" onclick={saveAIAccessCode}>
+                  {#if $viewportKind !== 'phone'}
+                    <button class="px-3 rounded-lg bg-gray-700 text-xs text-gray-200" onclick={() => { aiAccessCodeVisible = !aiAccessCodeVisible; }} aria-label="Show or hide access code">
+                      {aiAccessCodeVisible ? '隱藏' : '顯示'}
+                    </button>
+                  {/if}
+                  <button class="px-4 h-12 rounded-xl bg-blue-600 text-[14px] font-semibold text-white" onclick={saveAIAccessCode}>
                     {aiAccessCodeSaved ? '✓' : '儲存'}
                   </button>
                 </div>
               {/if}
-              <p class="text-[10px] leading-relaxed text-gray-500">真正 OpenAI API key 只保存在 Firebase server；iPhone 冇 API key。</p>
+              <p class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} leading-relaxed text-gray-500">真正 OpenAI API key 只保存在 Firebase server；iPhone 冇 API key。</p>
             </div>
 
             <div>
-              <span class="text-[10px] text-gray-400 block mb-1.5">輸出質素</span>
+              <span class="{$viewportKind === 'phone' ? 'text-[13px]' : 'text-[10px]'} text-gray-400 block mb-1.5">輸出質素</span>
               <div class="grid grid-cols-2 gap-2">
                 <button
-                  class="rounded-lg border px-3 py-2 text-left {aiRenderQuality === 'low' ? 'border-blue-500 bg-blue-900/30 text-blue-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
+                  class="rounded-xl border px-3 {$viewportKind === 'phone' ? 'min-h-16 py-3' : 'py-2'} text-left {aiRenderQuality === 'low' ? 'border-blue-500 bg-blue-900/30 text-blue-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
                   onclick={() => { aiRenderQuality = 'low'; }}
                 >
-                  <span class="block text-xs font-medium">快速草圖</span>
-                  <span class="block text-[10px] opacity-70 mt-0.5">平啲，先試風格</span>
+                  <span class="block {$viewportKind === 'phone' ? 'text-[15px]' : 'text-xs'} font-medium">快速草圖</span>
+                  <span class="block {$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} opacity-70 mt-0.5">平啲，先試風格</span>
                 </button>
                 <button
-                  class="rounded-lg border px-3 py-2 text-left {aiRenderQuality === 'high' ? 'border-purple-500 bg-purple-900/30 text-purple-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
+                  class="rounded-xl border px-3 {$viewportKind === 'phone' ? 'min-h-16 py-3' : 'py-2'} text-left {aiRenderQuality === 'high' ? 'border-purple-500 bg-purple-900/30 text-purple-200' : 'border-gray-700 bg-gray-800 text-gray-400'}"
                   onclick={() => { aiRenderQuality = 'high'; }}
                 >
-                  <span class="block text-xs font-medium">高清效果圖</span>
-                  <span class="block text-[10px] opacity-70 mt-0.5">貴啲，最後先用</span>
+                  <span class="block {$viewportKind === 'phone' ? 'text-[15px]' : 'text-xs'} font-medium">高清效果圖</span>
+                  <span class="block {$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} opacity-70 mt-0.5">貴啲，最後先用</span>
                 </button>
               </div>
             </div>
           {/if}
 
-          <details class="text-[10px] text-gray-500">
+          <details class="{$viewportKind === 'phone' ? 'hidden' : 'block'} text-[10px] text-gray-500">
             <summary class="cursor-pointer hover:text-gray-400">睇完整 AI 指示</summary>
             <p class="mt-1 p-2 bg-gray-800 rounded text-gray-400 leading-relaxed">{buildAIPrompt()}</p>
           </details>
 
           <button
             data-testid="ai-render-generate"
-            class="w-full min-h-12 px-3 py-2.5 bg-purple-600 text-white text-sm font-semibold rounded-xl hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            class="w-full px-3 py-2.5 bg-purple-600 text-white font-semibold hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 {$viewportKind === 'phone' ? 'sticky bottom-0 z-10 min-h-14 text-[17px] rounded-2xl shadow-xl shadow-purple-950/50' : 'min-h-12 text-sm rounded-xl'}"
             onclick={runAIRender}
             disabled={aiRendering}
           >
@@ -2610,7 +2747,7 @@
     </div>
   {/if}
 
-  {#if editMode && !walkthroughMode}
+  {#if editMode && !walkthroughMode && $viewportKind !== 'phone'}
     <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-10">
       <div class="bg-blue-600/90 text-white text-sm px-4 py-2 rounded-lg backdrop-blur-sm flex items-center gap-2">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2675,7 +2812,8 @@
 
   <!-- MaterialPicker removed — wall materials editable via Properties panel -->
 
-  <!-- Lighting Controls Toggle Button -->
+  {#if $viewportKind !== 'phone'}
+  <!-- Desktop lighting shortcut -->
   <button
     onclick={() => { lightingPanelOpen = !lightingPanelOpen; }}
     class="absolute bottom-4 left-4 z-50 p-2 rounded-lg transition-colors {lightingPanelOpen ? 'bg-amber-500 text-white ring-2 ring-amber-300' : 'bg-black/70 text-white hover:bg-black/80'}"
@@ -2690,13 +2828,19 @@
       <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
     </svg>
   </button>
+  {/if}
 
   <!-- Lighting Controls Panel -->
   {#if lightingPanelOpen}
-    <div class="absolute bottom-14 left-4 z-50 bg-black/80 text-white text-xs rounded-lg backdrop-blur-sm p-3 space-y-3 min-w-[220px] select-none">
-      <div class="font-semibold text-white/90 text-sm flex items-center gap-1.5">
+    <div class={$viewportKind === 'phone'
+      ? 'absolute inset-x-2 bottom-2 z-[65] bg-[#141b23] text-white rounded-3xl p-4 space-y-4 shadow-2xl select-none'
+      : 'absolute bottom-14 left-4 z-50 bg-black/80 text-white text-xs rounded-lg backdrop-blur-sm p-3 space-y-3 min-w-[220px] select-none'}>
+      <div class="font-semibold text-white/90 {$viewportKind === 'phone' ? 'text-[18px]' : 'text-sm'} flex items-center gap-1.5">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/></svg>
         Lighting Controls
+        {#if $viewportKind === 'phone'}
+          <button onclick={() => { lightingPanelOpen = false; }} class="ml-auto w-11 h-11 rounded-full bg-[#222d39] text-white" aria-label="關閉光線設定">✕</button>
+        {/if}
       </div>
 
       <!-- Time of Day Presets -->

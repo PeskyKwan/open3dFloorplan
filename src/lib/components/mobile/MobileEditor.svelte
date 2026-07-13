@@ -85,6 +85,7 @@
 
   // ── lazy 3D ──
   let ThreeViewer = $state<any>(null);
+  let threeViewerRef = $state<any>(null);
   $effect(() => {
     if (mode === '3d' && !ThreeViewer) {
       import('$lib/components/viewer3d/ThreeViewer.svelte').then((m) => { ThreeViewer = m.default; });
@@ -92,10 +93,30 @@
   });
 
   // ── bottom sheet ──
-  type Sheet = null | 'tools' | 'furniture' | 'arrange' | 'more';
+  type Sheet = null | 'add' | 'furniture' | 'arrange' | 'more';
   let sheet = $state<Sheet>(null);
   function openSheet(s: Sheet) { sheet = sheet === s ? null : s; }
   function closeSheet() { sheet = null; }
+
+  function showPlan() {
+    viewMode.set('2d');
+    closeSheet();
+  }
+
+  function showFurniture() {
+    viewMode.set('2d');
+    sheet = 'furniture';
+  }
+
+  function show3D() {
+    viewMode.set('3d');
+    closeSheet();
+  }
+
+  function startAIRender() {
+    closeSheet();
+    threeViewerRef?.startMobileAIRender?.();
+  }
 
   // ── furniture search ──
   let search = $state('');
@@ -244,18 +265,18 @@
 <div class="h-screen w-full flex flex-col overflow-hidden relative bg-[#0b0f14]" style="padding-top: env(safe-area-inset-top);">
   <!-- Top bar -->
   <div class="flex items-center gap-2 px-3 h-16 shrink-0">
-    <a href="/" class="h-12 pl-2 pr-4 rounded-full bg-[#1c2530] text-slate-100 flex items-center gap-1 active:bg-[#26313d]" aria-label="返去專案列表">
+    <a href="/" class="w-12 h-12 rounded-full bg-[#1c2530] text-slate-100 flex items-center justify-center active:bg-[#26313d]" aria-label="返去專案列表">
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
-      <span class="text-[15px] font-medium">返去</span>
     </a>
-    <div class="flex-1 min-w-0 text-center px-1">
-      <div class="text-base font-semibold text-white truncate">{project?.name ?? 'Untitled'}</div>
+    <div class="flex-1 min-w-0 px-1">
+      <div class="text-[17px] font-semibold text-white truncate">{project?.name ?? 'Untitled'}</div>
+      <div class="text-[13px] text-slate-400">{mode === '3d' ? '3D 預覽' : sheet === 'furniture' ? '傢俬佈置' : '平面圖'}</div>
     </div>
     <button onclick={() => undo()} class="w-12 h-12 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Undo 復原">
       <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
     </button>
-    <button onclick={() => redo()} class="w-12 h-12 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="Redo 重做">
-      <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
+    <button onclick={() => openSheet('more')} class="w-12 h-12 flex items-center justify-center rounded-full bg-[#1c2530] text-slate-200 active:bg-[#26313d]" aria-label="更多">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
     </button>
   </div>
 
@@ -293,7 +314,7 @@
         <button onclick={() => canvasZoom.update((z) => Math.max(0.1, z / 1.25))} class="w-11 h-11 text-2xl text-slate-200 active:bg-white/10" aria-label="Zoom out">−</button>
       </div>
     {:else if ThreeViewer}
-      <ThreeViewer />
+      <ThreeViewer bind:this={threeViewerRef} />
     {:else}
       <div class="flex items-center justify-center h-full text-slate-400">Loading 3D…</div>
     {/if}
@@ -458,37 +479,40 @@
         </div>
       </div>
     {/if}
+
+    {#if mode === '3d'}
+      <button
+        onclick={startAIRender}
+        class="absolute left-4 right-4 bottom-4 z-30 h-14 rounded-2xl bg-gradient-to-r from-[#8b35f2] to-[#b31fe8] text-white text-[17px] font-bold shadow-xl shadow-purple-950/40 active:scale-[0.98] transition-transform"
+        aria-label="AI Render"
+        data-testid="mobile-ai-render"
+      >
+        ✨ AI Render
+      </button>
+    {:else if !selFurniture && !selWall && !selDoor && !selWin}
+      <button
+        onclick={() => openSheet('add')}
+        class="absolute right-4 bottom-4 z-30 h-13 px-5 rounded-2xl bg-[#397fe4] text-white text-[16px] font-semibold shadow-xl shadow-blue-950/40 active:scale-[0.98] transition-transform"
+        aria-label="加入項目"
+      >
+        ＋ 加入
+      </button>
+    {/if}
   </div>
 
-  <!-- Bottom action bar — Scan is the big centre button (camera-app style) -->
-  <div class="flex items-end justify-between gap-1 px-3 pt-2 shrink-0" style="padding-bottom: max(1rem, env(safe-area-inset-bottom));">
-    <button onclick={() => openSheet('furniture')} class="flex-1 flex flex-col items-center gap-1" aria-label="傢俬">
-      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'furniture' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20v6H2zM4 12V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M6 18v2M18 18v2"/></svg>
-      </span>
-      <span class="text-[12px] font-medium {sheet === 'furniture' ? 'text-white' : 'text-slate-400'}">傢俬</span>
+  <!-- Three stable destinations. Context actions live inside each destination. -->
+  <div class="grid grid-cols-3 gap-2 px-3 pt-2 shrink-0" style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom));">
+    <button onclick={showPlan} class="h-[68px] rounded-2xl flex items-center justify-center gap-2 {mode === '2d' && sheet !== 'furniture' ? 'bg-[#e8f1ff] text-[#123967]' : 'bg-[#1c2530] text-slate-300'}" aria-label="平面 Plan">
+      <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z"/></svg>
+      <span class="text-[15px] font-semibold">平面</span>
     </button>
-    <button onclick={() => openSheet('arrange')} class="flex-1 flex flex-col items-center gap-1" aria-label="執位">
-      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'arrange' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 7.2H22l-6 4.6 2.4 7.2L12 16.6 5.6 21l2.4-7.2L2 9.2h7.6z"/></svg>
-      </span>
-      <span class="text-[12px] font-medium {sheet === 'arrange' ? 'text-white' : 'text-slate-400'}">執位</span>
+    <button onclick={showFurniture} class="h-[68px] rounded-2xl flex items-center justify-center gap-2 {mode === '2d' && sheet === 'furniture' ? 'bg-[#e8f1ff] text-[#123967]' : 'bg-[#1c2530] text-slate-300'}" aria-label="傢俬">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h20v6H2zM4 12V8a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4M6 18v2M18 18v2"/></svg>
+      <span class="text-[15px] font-semibold">傢俬</span>
     </button>
-    <button onclick={importScan} class="flex-1 flex flex-col items-center gap-1 -mt-5" aria-label="掃描房間">
-      <span class="w-[72px] h-[72px] rounded-full bg-gradient-to-b from-[#4a8df0] to-[#2f6fd8] text-white shadow-xl shadow-blue-500/40 flex items-center justify-center border-4 border-[#0b0f14]">
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
-      </span>
-      <span class="text-[12px] font-semibold text-[#5b9bf6]">掃描</span>
-    </button>
-    <button onclick={() => viewMode.set(mode === '3d' ? '2d' : '3d')} class="flex-1 flex flex-col items-center gap-1" aria-label="3D 睇">
-      <span class="w-14 h-14 rounded-full flex items-center justify-center text-base font-bold {mode === '3d' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">{mode === '3d' ? '2D' : '3D'}</span>
-      <span class="text-[12px] font-medium {mode === '3d' ? 'text-white' : 'text-slate-400'}">{mode === '3d' ? '平面' : '立體'}</span>
-    </button>
-    <button onclick={() => openSheet('more')} class="flex-1 flex flex-col items-center gap-1" aria-label="更多">
-      <span class="w-14 h-14 rounded-full flex items-center justify-center {sheet === 'more' ? 'bg-[#5b9bf6] text-[#04213f]' : 'bg-[#1c2530] text-slate-300'}">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
-      </span>
-      <span class="text-[12px] font-medium {sheet === 'more' ? 'text-white' : 'text-slate-400'}">更多</span>
+    <button onclick={show3D} class="h-[68px] rounded-2xl flex items-center justify-center gap-2 {mode === '3d' ? 'bg-[#e8f1ff] text-[#123967]' : 'bg-[#1c2530] text-slate-300'}" aria-label="3D 睇">
+      <span class="text-[18px] font-black">3D</span>
+      <span class="text-[15px] font-semibold">預覽</span>
     </button>
   </div>
 
@@ -501,13 +525,46 @@
       <div class="relative flex items-center px-4 pt-4 pb-3">
         <div class="w-10 h-1 bg-white/20 rounded-full absolute left-1/2 -translate-x-1/2 top-2"></div>
         <h2 class="text-base font-semibold text-white mt-1">
-          {sheet === 'furniture' ? '傢俬' : sheet === 'arrange' ? '執位 / 試位' : '更多'}
+          {sheet === 'add' ? '加入平面圖' : sheet === 'furniture' ? '傢俬' : sheet === 'arrange' ? '執位 / 試位' : '更多'}
         </h2>
         <button onclick={closeSheet} class="ml-auto w-8 h-8 rounded-full bg-[#1c2530] text-slate-300 flex items-center justify-center leading-none active:bg-[#26313d]" aria-label="Close">✕</button>
       </div>
 
       <div class="overflow-y-auto px-3 pb-6">
-        {#if sheet === 'furniture'}
+        {#if sheet === 'add'}
+          <button onclick={importScan} class="w-full min-h-20 p-4 rounded-2xl bg-gradient-to-r from-[#286bd1] to-[#478de9] active:scale-[0.99] text-left mb-4 flex items-center gap-4" aria-label="掃描房間">
+            <span class="w-12 h-12 shrink-0 rounded-full bg-white/15 flex items-center justify-center">
+              <svg width="27" height="27" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h2M17 4h2a1 1 0 0 1 1 1v2M20 17v2a1 1 0 0 1-1 1h-2M7 20H5a1 1 0 0 1-1-1v-2M4 12h16"/></svg>
+            </span>
+            <span>
+              <span class="block text-[17px] font-bold text-white">{isNativeScanAvailable() ? '掃描房間' : '匯入掃描檔'}</span>
+              <span class="block text-[14px] text-blue-100 mt-0.5">最快建立完整平面圖</span>
+            </span>
+          </button>
+          <div class="text-[13px] font-semibold text-slate-400 px-1 mb-2">手動加入</div>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick={() => { sheet = 'furniture'; }} class="min-h-20 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="text-[17px] font-semibold text-white">🛋 傢俬</div>
+              <div class="text-[14px] text-slate-400 mt-1">梳化、床、櫃</div>
+            </button>
+            <button onclick={() => pick('wall')} class="min-h-20 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="text-[17px] font-semibold text-white">▭ 牆</div>
+              <div class="text-[14px] text-slate-400 mt-1">兩點畫牆</div>
+            </button>
+            <button onclick={() => pick('door')} class="min-h-20 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="text-[17px] font-semibold text-white">🚪 門</div>
+              <div class="text-[14px] text-slate-400 mt-1">加落牆上</div>
+            </button>
+            <button onclick={() => pick('window')} class="min-h-20 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
+              <div class="text-[17px] font-semibold text-white">🪟 窗</div>
+              <div class="text-[14px] text-slate-400 mt-1">加落牆上</div>
+            </button>
+            <button onclick={addStairs} class="min-h-20 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left col-span-2">
+              <div class="text-[17px] font-semibold text-white">▦ 樓梯</div>
+              <div class="text-[14px] text-slate-400 mt-1">放置樓梯</div>
+            </button>
+          </div>
+        {:else if sheet === 'furniture'}
           <input type="text" placeholder="搵傢俬…" bind:value={search} class="w-full px-4 h-12 bg-[#0f151c] rounded-xl text-base text-white placeholder-slate-500 mb-3 outline-none" />
           <div class="grid grid-cols-3 gap-2">
             {#each filtered as item (item.id)}
@@ -538,31 +595,18 @@
             {#if fitMsg}<p class="text-[14px] mt-2.5 {fitOk ? 'text-emerald-400' : 'text-[#f0787a]'}">{fitMsg}</p>{/if}
           </div>
         {:else if sheet === 'more'}
-          <div class="text-[13px] font-medium text-slate-500 px-1 mb-2">工具</div>
-          <div class="grid grid-cols-2 gap-2 mb-4">
-            <button onclick={() => pick('select')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-semibold text-base text-white">↖︎ 揀嘢</div>
-              <div class="text-[13px] text-slate-500 mt-1">撳嚟揀 / 改嘢</div>
+          <div class="space-y-2 mb-4">
+            <button onclick={() => { sheet = 'arrange'; }} class="w-full min-h-16 p-4 rounded-2xl bg-[#17142b] active:bg-[#201a3a] text-left flex items-center gap-3">
+              <span class="text-2xl">✨</span>
+              <span><span class="block text-[17px] font-semibold text-white">執位 / 試位</span><span class="block text-[14px] text-slate-400 mt-0.5">自動排好，買之前試尺寸</span></span>
             </button>
-            <button onclick={() => pick('wall')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-semibold text-base text-white">▭ 畫牆</div>
-              <div class="text-[13px] text-slate-500 mt-1">撳兩點畫一幅牆</div>
+            <button onclick={() => redo()} class="w-full min-h-16 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left flex items-center gap-3">
+              <span class="text-2xl">↻</span>
+              <span class="text-[17px] font-semibold text-white">重做 Redo</span>
             </button>
-            <button onclick={() => pick('door')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-semibold text-base text-white">🚪 加門</div>
-              <div class="text-[13px] text-slate-500 mt-1">撳落幅牆度就有門</div>
-            </button>
-            <button onclick={() => pick('window')} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-semibold text-base text-white">🪟 加窗</div>
-              <div class="text-[13px] text-slate-500 mt-1">撳落幅牆度就有窗</div>
-            </button>
-            <button onclick={addStairs} class="p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left">
-              <div class="font-semibold text-base text-white">▦ 樓梯</div>
-              <div class="text-[13px] text-slate-500 mt-1">撳畫面放樓梯</div>
-            </button>
-            <button onclick={importScan} class="p-4 rounded-2xl bg-[#12233c] active:bg-[#16304f] text-left">
-              <div class="font-semibold text-base text-[#5b9bf6]">◎ {isNativeScanAvailable() ? '掃描房間' : '匯入掃描檔'}</div>
-              <div class="text-[13px] text-[#5b9bf6]/70 mt-1">{isNativeScanAvailable() ? 'LiDAR 掃間房' : '匯入 .json / .zip 掃描檔'}</div>
+            <button onclick={() => { sheet = 'add'; }} class="w-full min-h-16 p-4 rounded-2xl bg-[#0f151c] active:bg-[#1c2530] text-left flex items-center gap-3">
+              <span class="text-2xl">＋</span>
+              <span><span class="block text-[17px] font-semibold text-white">加入項目</span><span class="block text-[14px] text-slate-400 mt-0.5">掃描、牆、門、窗、樓梯</span></span>
             </button>
           </div>
           <div class="space-y-2">

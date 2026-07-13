@@ -124,7 +124,7 @@ const tablePos = { x: wc.x + nx * side * 75, y: wc.y + ny * side * 75 }; // 75cm
 // place a table via the sheet, then DRAG it beside the window
 await page.getByText('傢俬', { exact: true }).tap(); await sleep(400);
 await page.getByPlaceholder('搵傢俬…').fill('table'); await sleep(300);
-let tiles = page.locator('.grid.grid-cols-3 button');
+let tiles = page.locator('.absolute.left-0.right-0.bottom-0.z-50 .grid.grid-cols-3 button');
 if (await tiles.count() === 0) { await page.getByPlaceholder('搵傢俬…').fill(''); await sleep(300); }
 await tiles.first().tap(); await sleep(500);
 fd = await floorData();
@@ -343,7 +343,8 @@ await check(`one-finger drag panned the camera (${Math.round(v0.camX)}→${Math.
 console.log('\nS13 arrange + undo');
 fd = await floorData();
 const posBefore = fd.furniture.map(f => `${Math.round(f.position.x)},${Math.round(f.position.y)}`).join('|');
-await page.getByText('執位', { exact: true }).tap(); await sleep(400);
+await page.getByLabel('更多').tap(); await sleep(250);
+await page.getByText('執位 / 試位', { exact: true }).tap(); await sleep(400);
 await page.getByText('一鍵執靚').tap(); await sleep(1200);
 const msg = await page.locator('button:has-text("一鍵執靚")').textContent();
 await check('arrange reports kept-in-place pieces', /原位冇郁|全部擺得好/.test(msg));
@@ -356,8 +357,9 @@ await check('undo restores pre-arrange layout', posAfterUndo === posBefore);
 // ═══ SCENARIO 14: add window on a wall; door type → opening persists ═══
 console.log('\nS14 add window + opening type');
 const winCountBefore = fd.windows.length;
-await page.getByText('更多', { exact: true }).tap(); await sleep(400);
-await page.getByText('🪟 加窗').tap(); await sleep(400);
+await page.getByLabel('更多').tap(); await sleep(250);
+await page.getByText('加入項目', { exact: true }).tap(); await sleep(400);
+await page.getByText('🪟 窗', { exact: true }).tap(); await sleep(400);
 await tapWorld(qc.x, qc.y); await sleep(400);
 fd = await floorData();
 await check(`加窗 on a bare wall (${winCountBefore}→${fd.windows.length})`, fd.windows.length === winCountBefore + 1);
@@ -373,7 +375,7 @@ if (await panelOpen('門 Door')) {
 // ═══ SCENARIO 15: back to list → reopen → everything still there ═══
 console.log('\nS15 persistence round-trip');
 const fdBefore = await floorData();
-await page.getByText('返去').tap(); await sleep(900);
+await page.getByLabel('返去專案列表').tap(); await sleep(900);
 await page.locator('h3').first().tap();
 await page.waitForURL(/\/editor/); await sleep(1200);
 fd = await floorData();
@@ -383,8 +385,8 @@ await check('project reopens with identical content',
 
 // ═══ SCENARIO 16: 3D + secure mobile AI Render flow ═══
 console.log('\nS16 3D + AI Render mobile flow');
-await page.getByText('立體', { exact: true }).tap(); await sleep(4000);
-await check('3D loads (平面 toggle shows)', await page.getByText('平面', { exact: true }).count() > 0);
+await page.getByLabel('3D 睇').tap(); await sleep(4000);
+await check('3D loads (平面 tab stays visible)', await page.getByLabel('平面 Plan').count() > 0);
 
 let renderRequest = null;
 await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender', async (route) => {
@@ -402,14 +404,14 @@ await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRende
     }),
   });
 });
-await page.getByLabel('Place Interior Camera').tap();
+await page.getByTestId('mobile-ai-render').tap();
 const canvas3d = page.locator('canvas').last();
 const canvas3dBox = await canvas3d.boundingBox();
 if (canvas3dBox) {
   await canvas3d.tap({ position: { x: canvas3dBox.width * 0.5, y: canvas3dBox.height * 0.65 } });
   await sleep(800);
 }
-await page.getByText('✨ AI Render', { exact: true }).tap(); await sleep(400);
+await sleep(400);
 const aiPanel = page.getByTestId('ai-render-panel');
 await check('AI Render bottom sheet opens on iPhone', await aiPanel.count() === 1);
 const aiPanelBox = await page.getByTestId('ai-camera-panel').boundingBox();
@@ -426,19 +428,20 @@ const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox
 await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);
 await page.screenshot({ path: '/tmp/e2e_ai_render_mobile.png' });
 await page.getByLabel('Close camera').tap(); await sleep(300);
-await page.getByText('平面', { exact: true }).tap(); await sleep(800);
-await check('back to 2D', await page.getByText('立體', { exact: true }).count() > 0);
+await page.getByLabel('平面 Plan').tap(); await sleep(800);
+await check('back to 2D', await page.getByLabel('3D 睇').count() > 0);
 
 // ═══ SCENARIO 17: blank project — empty CTA → place → CTA gone; fit-check no-room msg ═══
 console.log('\nS17 blank project flow');
-await page.getByText('返去').tap(); await sleep(900);
+await page.getByLabel('返去專案列表').tap(); await sleep(900);
 await page.getByText('新專案').tap();
 await page.waitForURL(/\/editor/); await sleep(1000);
 await check('blank project shows big scan CTA', await panelOpen('掃描房間'));
 await page.getByText('傢俬', { exact: true }).tap(); await sleep(400);
-await page.locator('.grid.grid-cols-3 button').first().tap(); await sleep(500);
+await page.locator('.absolute.left-0.right-0.bottom-0.z-50 .grid.grid-cols-3 button').first().tap(); await sleep(500);
 await check('CTA disappears once content exists', !(await panelOpen('拎住部機行一圈')));
-await page.getByText('執位', { exact: true }).tap(); await sleep(400);
+await page.getByLabel('更多').tap(); await sleep(250);
+await page.getByText('執位 / 試位', { exact: true }).tap(); await sleep(400);
 await page.getByText('一鍵執靚').tap(); await sleep(600);
 await check('arrange without rooms shows friendly message', await panelOpen('未偵測到房間'));
 
