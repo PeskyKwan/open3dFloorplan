@@ -440,6 +440,21 @@ const previewHealth = await aiScroller.locator('canvas').first().evaluate((canva
   return { visible, total };
 });
 await check('interior camera preview contains visible pixels (not black)', previewHealth.total > 0 && previewHealth.visible / previewHealth.total > 0.05 && await page.getByTestId('camera-preview-warning').count() === 0);
+const previewGesture = page.getByTestId('camera-preview-gesture');
+const gestureBox = await previewGesture.boundingBox();
+const yawBefore = Number(await previewGesture.getAttribute('data-camera-yaw'));
+if (gestureBox) {
+  await page.mouse.move(gestureBox.x + gestureBox.width * 0.5, gestureBox.y + gestureBox.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(gestureBox.x + gestureBox.width * 0.75, gestureBox.y + gestureBox.height * 0.4, { steps: 6 });
+  await page.mouse.up();
+  await sleep(400);
+}
+const yawAfter = Number(await previewGesture.getAttribute('data-camera-yaw'));
+await check('single-finger/mouse drag rotates the AI camera', !!gestureBox && Math.abs(yawAfter - yawBefore) > 5);
+await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
+await previewGesture.dispatchEvent('wheel', { deltaY: 100 }); await sleep(300);
+await check('trackpad/mouse wheel zooms the AI camera out', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
 await page.getByLabel('AI camera wide angle').tap(); await sleep(300);
 await check('phone has one-tap wide-angle recovery', (await page.getByLabel('AI camera wide angle').getAttribute('class'))?.includes('bg-blue-600'));
 const scrollState = await aiScroller.evaluate((el) => {

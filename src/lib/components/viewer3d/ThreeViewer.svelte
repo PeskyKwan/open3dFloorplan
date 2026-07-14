@@ -115,6 +115,8 @@
   let cameraPreviewDirty = $state(false);
   let cameraXrayWalls = $state(false);
   let previewDragStart: { x: number; y: number; yaw: number; pitch: number } | null = null;
+  const previewPointers = new Map<number, { x: number; y: number }>();
+  let previewPinchStart: { distance: number; fov: number } | null = null;
   let aiRenderOpen = $state(false);
   let aiRendering = $state(false);
   let aiRenderResult = $state<string | null>(null);
@@ -397,6 +399,59 @@
     const dz = fwdZ * forward + rightZ * right;
     cameraPosition = { ...cameraPosition, x: cameraPosition.x + dx, z: cameraPosition.z + dz };
     updateCameraMarkerFromState();
+    cameraPreviewDirty = true;
+  }
+
+  function clampCameraFOV(value: number) {
+    return Math.max(50, Math.min(125, Math.round(value)));
+  }
+
+  function previewPointerDown(e: PointerEvent) {
+    e.preventDefault();
+    previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    if (previewPointers.size === 1) {
+      previewDragStart = { x: e.clientX, y: e.clientY, yaw: cameraYaw, pitch: cameraPitch };
+      previewPinchStart = null;
+    } else if (previewPointers.size === 2) {
+      const [a, b] = [...previewPointers.values()];
+      previewPinchStart = { distance: Math.hypot(a.x - b.x, a.y - b.y), fov: cameraFOV };
+      previewDragStart = null;
+    }
+  }
+
+  function previewPointerMove(e: PointerEvent) {
+    if (!previewPointers.has(e.pointerId)) return;
+    e.preventDefault();
+    previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (previewPointers.size >= 2 && previewPinchStart) {
+      const [a, b] = [...previewPointers.values()];
+      const distance = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      cameraFOV = clampCameraFOV(previewPinchStart.fov * previewPinchStart.distance / distance);
+      cameraPreviewDirty = true;
+      return;
+    }
+    if (!previewDragStart) return;
+    cameraYaw = previewDragStart.yaw + (e.clientX - previewDragStart.x) * 0.5;
+    cameraPitch = Math.max(-45, Math.min(45, previewDragStart.pitch - (e.clientY - previewDragStart.y) * 0.3));
+    cameraPreviewDirty = true;
+  }
+
+  function previewPointerEnd(e: PointerEvent) {
+    previewPointers.delete(e.pointerId);
+    if (previewPointers.size === 1) {
+      const [remaining] = [...previewPointers.values()];
+      previewDragStart = { x: remaining.x, y: remaining.y, yaw: cameraYaw, pitch: cameraPitch };
+      previewPinchStart = null;
+    } else {
+      previewDragStart = null;
+      previewPinchStart = null;
+    }
+  }
+
+  function previewWheel(e: WheelEvent) {
+    e.preventDefault();
+    cameraFOV = clampCameraFOV(cameraFOV + Math.sign(e.deltaY) * 6);
     cameraPreviewDirty = true;
   }
 
@@ -2603,10 +2658,17 @@
       >
       <!-- Preview canvas with drag-to-rotate -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="relative cursor-grab active:cursor-grabbing"
-        onpointerdown={(e) => { previewDragStart = { x: e.clientX, y: e.clientY, yaw: cameraYaw, pitch: cameraPitch }; (e.target as HTMLElement).setPointerCapture(e.pointerId); }}
-        onpointermove={(e) => { if (!previewDragStart) return; const dx = e.clientX - previewDragStart.x; const dy = e.clientY - previewDragStart.y; cameraYaw = previewDragStart.yaw + dx * 0.5; cameraPitch = Math.max(-45, Math.min(45, previewDragStart.pitch - dy * 0.3)); cameraPreviewDirty = true; }}
-        onpointerup={() => { previewDragStart = null; }}
+      <div
+        data-testid="camera-preview-gesture"
+        data-camera-yaw={cameraYaw.toFixed(1)}
+        data-camera-fov={cameraFOV}
+        class="relative cursor-grab active:cursor-grabbing touch-none select-none"
+        style="touch-action: none;"
+        onpointerdown={previewPointerDown}
+        onpointermove={previewPointerMove}
+        onpointerup={previewPointerEnd}
+        onpointercancel={previewPointerEnd}
+        onwheel={previewWheel}
       >
         <canvas bind:this={cameraPreviewCanvas} width="384" height="216" class="w-full pointer-events-none"></canvas>
         {#if cameraPreviewWarning}
@@ -2615,7 +2677,7 @@
             <div class="text-[13px] text-slate-300 mt-2">{cameraPreviewWarning}</div>
           </div>
         {:else}
-          <div class="absolute bottom-1 left-2 text-[11px] text-white/60 pointer-events-none">拖動畫面調整方向</div>
+          <div class="absolute bottom-1 left-2 text-[11px] text-white/70 pointer-events-none">單指拖動轉方向 · 雙指/滾輪縮放</div>
         {/if}
       </div>
 
@@ -2676,11 +2738,11 @@
             </button>
           </div>
           <div>
-            <div class="text-[13px] text-slate-400 mb-2">視角</div>
+            <div data-testid="camera-fov-value" class="text-[13px] text-slate-400 mb-2">視角 {cameraFOV}°</div>
             <div class="grid grid-cols-3 gap-2">
-              <button aria-label="AI camera wide angle" onclick={() => { cameraFOV = 100; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 100 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">廣角</button>
-              <button aria-label="AI camera normal angle" onclick={() => { cameraFOV = 80; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 80 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">正常</button>
-              <button aria-label="AI camera close angle" onclick={() => { cameraFOV = 60; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 60 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">近鏡</button>
+              <button aria-label="AI camera wide angle" onclick={() => { cameraFOV = 120; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 120 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">廣角</button>
+              <button aria-label="AI camera normal angle" onclick={() => { cameraFOV = 90; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 90 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">正常</button>
+              <button aria-label="AI camera close angle" onclick={() => { cameraFOV = 65; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 65 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">近鏡</button>
             </div>
           </div>
         </div>
