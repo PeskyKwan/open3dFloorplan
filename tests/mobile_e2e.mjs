@@ -389,11 +389,21 @@ await page.getByLabel('3D 睇').tap(); await sleep(4000);
 await check('3D loads (平面 tab stays visible)', await page.getByLabel('平面 Plan').count() > 0);
 
 let renderRequest = null;
+let renderAttempt = 0;
 await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender', async (route) => {
+  renderAttempt++;
   renderRequest = {
     authorization: route.request().headers().authorization,
     body: route.request().postDataJSON(),
   };
+  if (renderAttempt === 2) {
+    await route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: 'Mock backend failure for mobile error visibility test.' }),
+    });
+    return;
+  }
   await route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -416,6 +426,13 @@ const aiPanel = page.getByTestId('ai-render-panel');
 await check('AI Render bottom sheet opens on iPhone', await aiPanel.count() === 1);
 const aiPanelBox = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('AI Render sheet stays inside 428×926 viewport', !!aiPanelBox && aiPanelBox.x >= 0 && aiPanelBox.y >= 0 && aiPanelBox.x + aiPanelBox.width <= 428 && aiPanelBox.y + aiPanelBox.height <= 926);
+const aiScroller = page.getByTestId('ai-camera-scroll');
+const scrollState = await aiScroller.evaluate((el) => {
+  const max = el.scrollHeight - el.clientHeight;
+  el.scrollTop = Math.min(120, max);
+  return { max, top: el.scrollTop };
+});
+await check('AI Render sheet has a working independent vertical scroller', scrollState.max > 0 && scrollState.top > 0);
 await page.getByTestId('ai-access-code').fill('e2e-beta-code');
 await page.getByTestId('ai-access-code').locator('xpath=following-sibling::button[last()]').tap();
 await page.getByTestId('ai-render-generate').tap();
@@ -426,6 +443,12 @@ await check('draft render sends low quality + camera preview', renderRequest?.bo
 await check('mock GPT Image 2 result displays', await page.getByAltText('AI Render').count() === 1);
 const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);
+await page.getByText('再整一張').tap();
+await page.getByTestId('ai-render-generate').tap();
+const errorCard = page.getByTestId('ai-render-error');
+await errorCard.waitFor({ timeout: 5000 });
+const [errorBox, scrollerBox] = await Promise.all([errorCard.boundingBox(), aiScroller.boundingBox()]);
+await check('backend error auto-scrolls into the visible mobile sheet', !!errorBox && !!scrollerBox && errorBox.y < scrollerBox.y + scrollerBox.height && errorBox.y + errorBox.height > scrollerBox.y);
 await page.screenshot({ path: '/tmp/e2e_ai_render_mobile.png' });
 await page.getByLabel('Close camera').tap(); await sleep(300);
 await page.getByLabel('平面 Plan').tap(); await sleep(800);

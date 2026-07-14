@@ -160,24 +160,52 @@
 
   /** Capture scene from interior camera as base64 PNG */
   function captureSceneBase64(width: number, height: number): string {
+    if (!scene || !interiorCamera || !cameraPreviewRenderer || !cameraPreviewCanvas) {
+      throw new Error('相機預覽未準備好，請重新選位再試。');
+    }
     updateInteriorCamera();
-    const offRenderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-    offRenderer.setSize(width, height);
-    offRenderer.shadowMap.enabled = true;
-    offRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    offRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-    if (cameraHelper) cameraHelper.visible = false;
-    setSpritesVisible(false);
-    offRenderer.render(scene!, interiorCamera!);
-    if (cameraHelper) cameraHelper.visible = true;
-    setSpritesVisible(true);
-    const dataUrl = offRenderer.domElement.toDataURL('image/png');
-    offRenderer.dispose();
-    return dataUrl;
+    const helperWasVisible = cameraHelper?.visible ?? false;
+    const spriteVisibility: Array<{ sprite: THREE.Sprite; visible: boolean }> = [];
+    scene.traverse((obj) => {
+      if (obj instanceof THREE.Sprite) spriteVisibility.push({ sprite: obj, visible: obj.visible });
+    });
+
+    try {
+      // Reuse the working preview WebGL context. Creating another renderer here
+      // exceeds WKWebView/Simulator context limits and fails before fetch().
+      cameraPreviewRenderer.setPixelRatio(1);
+      cameraPreviewRenderer.setSize(width, height, false);
+      if (cameraHelper) cameraHelper.visible = false;
+      for (const { sprite } of spriteVisibility) sprite.visible = false;
+      cameraPreviewRenderer.render(scene, interiorCamera);
+
+      const dataUrl = cameraPreviewCanvas.toDataURL('image/png');
+      if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) {
+        throw new Error('未能擷取 3D 相機畫面，請重新選位再試。');
+      }
+      return dataUrl;
+    } finally {
+      if (cameraHelper) cameraHelper.visible = helperWasVisible;
+      for (const { sprite, visible } of spriteVisibility) sprite.visible = visible;
+      cameraPreviewRenderer.setSize(384, 216, false);
+      cameraPreviewRenderer.render(scene, interiorCamera);
+      cameraPreviewDirty = false;
+    }
+  }
+
+  async function revealAIRenderFeedback() {
+    await tick();
+    requestAnimationFrame(() => {
+      aiCameraPanelEl?.scrollTo({ top: aiCameraPanelEl.scrollHeight, behavior: 'smooth' });
+    });
   }
 
   async function runAIRender() {
-    if (!scene || !interiorCamera) return;
+    if (!scene || !interiorCamera) {
+      aiRenderError = '3D 場景未準備好，請關閉 AI Render 再試。';
+      await revealAIRenderFeedback();
+      return;
+    }
 
     // The native/phone app always uses the server-side OpenAI route so no
     // provider API key is ever stored in the iOS bundle or WebView.
@@ -247,6 +275,7 @@
     const accessToken = aiAccessCode.trim() || getAIRenderAccessToken();
     if (!accessToken) {
       aiRenderError = '請先輸入 AI Render beta access code。OpenAI API key 只會放喺安全 server，唔會放入 iPhone。';
+      await revealAIRenderFeedback();
       return;
     }
     
@@ -264,10 +293,10 @@
         accessToken,
         signal: aiAbortController.signal,
       });
-      await tick();
-      aiCameraPanelEl?.scrollTo({ top: aiCameraPanelEl.scrollHeight, behavior: 'smooth' });
+      await revealAIRenderFeedback();
     } catch (e: any) {
       aiRenderError = e?.name === 'AbortError' ? 'Render 已取消。' : (e?.message ?? 'AI Render failed.');
+      await revealAIRenderFeedback();
     } finally {
       aiRendering = false;
       aiAbortController = null;
@@ -504,7 +533,7 @@
     if (!interiorCamera) return;
 
     if (!cameraPreviewRenderer) {
-      cameraPreviewRenderer = new THREE.WebGLRenderer({ canvas: cameraPreviewCanvas, antialias: true, alpha: false });
+      cameraPreviewRenderer = new THREE.WebGLRenderer({ canvas: cameraPreviewCanvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
       cameraPreviewRenderer.shadowMap.enabled = true;
       cameraPreviewRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
       cameraPreviewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -2412,16 +2441,15 @@
   <!-- Camera Preview Panel -->
   {#if cameraPreviewOpen && cameraPlaced}
     <div
-      bind:this={aiCameraPanelEl}
       data-testid="ai-camera-panel"
       class={$viewportKind === 'phone'
-        ? 'fixed inset-x-2 z-[70] bg-[#101720]/[0.99] rounded-3xl shadow-2xl overflow-y-auto'
-        : 'absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm overflow-y-auto max-w-[calc(100vw-2rem)]'}
+        ? 'fixed inset-x-2 z-[70] bg-[#101720]/[0.99] rounded-3xl shadow-2xl flex flex-col overflow-hidden'
+        : 'absolute bottom-4 right-4 z-50 bg-gray-900/95 rounded-xl shadow-2xl backdrop-blur-sm flex flex-col overflow-hidden max-w-[calc(100vw-2rem)]'}
       style={$viewportKind === 'phone'
         ? 'top: calc(env(safe-area-inset-top, 0px) + 0.5rem); bottom: calc(env(safe-area-inset-bottom, 0px) + 0.5rem);'
         : 'width: 420px; max-height: calc(100vh - 8rem);'}
     >
-      <div class="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#101720]/95 backdrop-blur-sm">
+      <div class="z-10 shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#101720]/95 backdrop-blur-sm">
         <span class="text-white {$viewportKind === 'phone' ? 'text-[18px] font-bold' : 'text-sm font-medium'}">{$viewportKind === 'phone' ? '✨ AI Render' : '📷 Interior Camera'}</span>
         <div class="flex gap-2">
           {#if $viewportKind !== 'phone'}
@@ -2432,6 +2460,12 @@
           <button class="w-10 h-10 rounded-full bg-gray-800 text-gray-300 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
         </div>
       </div>
+      <div
+        bind:this={aiCameraPanelEl}
+        data-testid="ai-camera-scroll"
+        class="min-h-0 flex-1 overflow-y-auto overscroll-contain touch-pan-y"
+        style="-webkit-overflow-scrolling: touch; touch-action: pan-y; overscroll-behavior-y: contain;"
+      >
       <!-- Preview canvas with drag-to-rotate -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="relative cursor-grab active:cursor-grabbing"
@@ -2658,32 +2692,32 @@
             <p class="mt-1 p-2 bg-gray-800 rounded text-gray-400 leading-relaxed">{buildAIPrompt()}</p>
           </details>
 
+          {#if aiRenderError}
+            <div data-testid="ai-render-error" class="bg-red-900/30 border border-red-600 rounded-2xl p-3 space-y-2">
+              <div class="text-[15px] font-semibold text-red-300">❌ 暫時未能生成</div>
+              <pre class="text-[13px] leading-relaxed text-red-200 whitespace-pre-wrap break-words select-all font-sans bg-red-950/40 rounded-xl p-3">{aiRenderError}</pre>
+              <button
+                class="text-[13px] text-red-300 hover:text-red-200 underline"
+                onclick={() => { navigator.clipboard.writeText(aiRenderError ?? ''); }}
+              >📋 Copy error</button>
+            </div>
+          {/if}
+
           <button
             data-testid="ai-render-generate"
-            class="w-full px-3 py-2.5 bg-purple-600 text-white font-semibold hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 {$viewportKind === 'phone' ? 'sticky bottom-0 z-10 min-h-14 text-[17px] rounded-2xl shadow-xl shadow-purple-950/50' : 'min-h-12 text-sm rounded-xl'}"
+            class="w-full px-3 py-2.5 bg-purple-600 text-white font-semibold hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 {$viewportKind === 'phone' ? 'min-h-14 text-[17px] rounded-2xl shadow-xl shadow-purple-950/50' : 'min-h-12 text-sm rounded-xl'}"
             onclick={runAIRender}
             disabled={aiRendering}
           >
             {#if aiRendering}
-              <span class="animate-spin">⏳</span> Rendering...
+              <span class="animate-spin">⏳</span> 正在生成，通常需要 30–90 秒…
             {:else}
               ✨ 生成室內效果圖
             {/if}
           </button>
 
           {#if aiRendering}
-            <button class="w-full text-xs text-gray-400 py-1" onclick={cancelAIRender}>取消 render</button>
-          {/if}
-
-          {#if aiRenderError}
-            <div class="bg-red-900/30 border border-red-700 rounded-lg p-3 space-y-2">
-              <div class="text-xs font-medium text-red-400">❌ AI Render Failed</div>
-              <pre class="text-[10px] text-red-300 whitespace-pre-wrap break-all max-h-32 overflow-y-auto select-all cursor-text font-mono bg-red-950/40 rounded p-2">{aiRenderError}</pre>
-              <button
-                class="text-[10px] text-red-400 hover:text-red-300 underline"
-                onclick={() => { navigator.clipboard.writeText(aiRenderError ?? ''); }}
-              >📋 Copy error</button>
-            </div>
+            <button class="w-full text-[13px] text-gray-400 py-2" onclick={cancelAIRender}>取消 render</button>
           {/if}
 
           {#if aiRenderResult}
@@ -2697,6 +2731,7 @@
           {/if}
         </div>
       {/if}
+      </div><!-- end camera panel scroller -->
     </div>
   {/if}
 
