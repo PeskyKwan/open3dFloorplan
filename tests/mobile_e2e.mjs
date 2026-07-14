@@ -427,6 +427,21 @@ await check('AI Render bottom sheet opens on iPhone', await aiPanel.count() === 
 const aiPanelBox = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('AI Render sheet stays inside 428×926 viewport', !!aiPanelBox && aiPanelBox.x >= 0 && aiPanelBox.y >= 0 && aiPanelBox.x + aiPanelBox.width <= 428 && aiPanelBox.y + aiPanelBox.height <= 926);
 const aiScroller = page.getByTestId('ai-camera-scroll');
+await sleep(500);
+const previewHealth = await aiScroller.locator('canvas').first().evaluate((canvas) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return { visible: 0, total: 0 };
+  const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  let visible = 0, total = 0;
+  for (let i = 0; i < pixels.length; i += 320) {
+    total++;
+    if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 24) visible++;
+  }
+  return { visible, total };
+});
+await check('interior camera preview contains visible pixels (not black)', previewHealth.total > 0 && previewHealth.visible / previewHealth.total > 0.05 && await page.getByTestId('camera-preview-warning').count() === 0);
+await page.getByLabel('AI camera wide angle').tap(); await sleep(300);
+await check('phone has one-tap wide-angle recovery', (await page.getByLabel('AI camera wide angle').getAttribute('class'))?.includes('bg-blue-600'));
 const scrollState = await aiScroller.evaluate((el) => {
   const max = el.scrollHeight - el.clientHeight;
   el.scrollTop = Math.min(120, max);
@@ -439,7 +454,7 @@ await page.getByTestId('ai-render-generate').tap();
 await page.getByAltText('AI Render').waitFor({ timeout: 5000 });
 await sleep(700);
 await check('mobile app sends only beta code to secure backend', renderRequest?.authorization === 'Bearer e2e-beta-code');
-await check('draft render sends low quality + camera preview', renderRequest?.body?.quality === 'low' && renderRequest?.body?.imageDataUrl?.startsWith('data:image/png;base64,'));
+await check('draft render sends low quality + a real camera preview', renderRequest?.body?.quality === 'low' && renderRequest?.body?.imageDataUrl?.startsWith('data:image/png;base64,') && renderRequest.body.imageDataUrl.length > 10000);
 await check('mock GPT Image 2 result displays', await page.getByAltText('AI Render').count() === 1);
 const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);

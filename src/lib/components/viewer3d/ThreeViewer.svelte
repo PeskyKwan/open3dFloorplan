@@ -15,6 +15,7 @@
   import { createFurnitureModelWithGLB } from '$lib/utils/furnitureModelLoader';
   import { addFurniture } from '$lib/stores/project';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
+  import { pointInPolygon } from '$lib/utils/hitTesting';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import { viewportKind } from '$lib/stores/viewport';
@@ -104,7 +105,8 @@
   let cameraHeight = $state(160);
   let cameraPreviewOpen = $state(false);
   let cameraPreviewCanvas: HTMLCanvasElement | null = null;
-  let cameraPreviewRenderer: THREE.WebGLRenderer | null = null;
+  let cameraPreviewRenderTarget: THREE.WebGLRenderTarget | null = null;
+  let cameraPreviewWarning = $state<string | null>(null);
   let cameraPlaced = $state(false);
   let cameraDragMode = $state<'position' | 'lookat' | null>(null);
   let cameraYaw = $state(0);   // degrees, 0 = initial direction
@@ -158,9 +160,9 @@
     return prompt;
   }
 
-  /** Capture scene from interior camera as base64 PNG */
-  function captureSceneBase64(width: number, height: number): string {
-    if (!scene || !interiorCamera || !cameraPreviewRenderer || !cameraPreviewCanvas) {
+  /** Render the interior camera using the existing main WebGL context. */
+  function renderInteriorPixels(width: number, height: number): Uint8Array {
+    if (!renderer || !scene || !interiorCamera) {
       throw new Error('相機預覽未準備好，請重新選位再試。');
     }
     updateInteriorCamera();
@@ -169,28 +171,74 @@
     scene.traverse((obj) => {
       if (obj instanceof THREE.Sprite) spriteVisibility.push({ sprite: obj, visible: obj.visible });
     });
+    const previousTarget = renderer.getRenderTarget();
+    let xrayApplied = false;
 
     try {
-      // Reuse the working preview WebGL context. Creating another renderer here
-      // exceeds WKWebView/Simulator context limits and fails before fetch().
-      cameraPreviewRenderer.setPixelRatio(1);
-      cameraPreviewRenderer.setSize(width, height, false);
+      if (!cameraPreviewRenderTarget) {
+        cameraPreviewRenderTarget = new THREE.WebGLRenderTarget(width, height, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.UnsignedByteType,
+          depthBuffer: true,
+        });
+        cameraPreviewRenderTarget.texture.colorSpace = THREE.SRGBColorSpace;
+      } else {
+        cameraPreviewRenderTarget.setSize(width, height);
+      }
       if (cameraHelper) cameraHelper.visible = false;
       for (const { sprite } of spriteVisibility) sprite.visible = false;
-      cameraPreviewRenderer.render(scene, interiorCamera);
-
-      const dataUrl = cameraPreviewCanvas.toDataURL('image/png');
-      if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) {
-        throw new Error('未能擷取 3D 相機畫面，請重新選位再試。');
-      }
-      return dataUrl;
+      if (cameraXrayWalls) { setWallsXray(true); xrayApplied = true; }
+      renderer.setRenderTarget(cameraPreviewRenderTarget);
+      renderer.clear();
+      renderer.render(scene, interiorCamera);
+      const pixels = new Uint8Array(width * height * 4);
+      renderer.readRenderTargetPixels(cameraPreviewRenderTarget, 0, 0, width, height, pixels);
+      return pixels;
     } finally {
+      renderer.setRenderTarget(previousTarget);
+      if (xrayApplied) setWallsXray(false);
       if (cameraHelper) cameraHelper.visible = helperWasVisible;
       for (const { sprite, visible } of spriteVisibility) sprite.visible = visible;
-      cameraPreviewRenderer.setSize(384, 216, false);
-      cameraPreviewRenderer.render(scene, interiorCamera);
-      cameraPreviewDirty = false;
+      markSceneDirty();
     }
+  }
+
+  function drawFlippedPixels(canvas: HTMLCanvasElement, pixels: Uint8Array, width: number, height: number) {
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('未能開啟相機預覽畫布。');
+    const image = ctx.createImageData(width, height);
+    const rowBytes = width * 4;
+    for (let y = 0; y < height; y++) {
+      const sourceStart = (height - 1 - y) * rowBytes;
+      image.data.set(pixels.subarray(sourceStart, sourceStart + rowBytes), y * rowBytes);
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  function pixelsLookBlank(pixels: Uint8Array): boolean {
+    let visible = 0;
+    const step = Math.max(4, Math.floor(pixels.length / 4000 / 4) * 4);
+    for (let i = 0; i < pixels.length; i += step) {
+      if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 24) visible++;
+    }
+    return visible < 8;
+  }
+
+  /** Capture scene from interior camera as base64 PNG. */
+  function captureSceneBase64(width: number, height: number): string {
+    const pixels = renderInteriorPixels(width, height);
+    if (pixelsLookBlank(pixels)) throw new Error('相機畫面係全黑，請按「重新選位」再試。');
+    const output = document.createElement('canvas');
+    drawFlippedPixels(output, pixels, width, height);
+    const dataUrl = output.toDataURL('image/png');
+    if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) {
+      throw new Error('未能擷取 3D 相機畫面，請重新選位再試。');
+    }
+    return dataUrl;
   }
 
   async function revealAIRenderFeedback() {
@@ -531,25 +579,17 @@
     if (!cameraPreviewCanvas || !scene) return;
     updateInteriorCamera();
     if (!interiorCamera) return;
-
-    if (!cameraPreviewRenderer) {
-      cameraPreviewRenderer = new THREE.WebGLRenderer({ canvas: cameraPreviewCanvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
-      cameraPreviewRenderer.shadowMap.enabled = true;
-      cameraPreviewRenderer.shadowMap.type = THREE.PCFSoftShadowMap;
-      cameraPreviewRenderer.toneMapping = THREE.ACESFilmicToneMapping;
-      cameraPreviewRenderer.toneMappingExposure = 1.0;
+    try {
+      const pixels = renderInteriorPixels(384, 216);
+      drawFlippedPixels(cameraPreviewCanvas, pixels, 384, 216);
+      cameraPreviewWarning = pixelsLookBlank(pixels)
+        ? '預覽暫時係全黑。請按「重新選位」，揀房中間附近。'
+        : null;
+    } catch (error: any) {
+      cameraPreviewWarning = error?.message ?? '未能顯示相機預覽，請重新選位。';
+    } finally {
+      cameraPreviewDirty = false;
     }
-    cameraPreviewRenderer.setSize(384, 216);
-    cameraPreviewRenderer.setPixelRatio(1);
-
-    if (cameraHelper) cameraHelper.visible = false;
-    setSpritesVisible(false);
-    if (cameraXrayWalls) setWallsXray(true);
-    cameraPreviewRenderer.render(scene, interiorCamera);
-    if (cameraHelper) cameraHelper.visible = true;
-    setSpritesVisible(true);
-    if (cameraXrayWalls) setWallsXray(false);
-    cameraPreviewDirty = false;
   }
 
   // Auto-render preview + update 3D marker when dirty flag is set
@@ -571,6 +611,99 @@
   let floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y=0 plane
   let ghostIntersection = new THREE.Vector3();
 
+  function distanceToSegment(p: { x: number; y: number }, wall: Wall): number {
+    const dx = wall.end.x - wall.start.x;
+    const dy = wall.end.y - wall.start.y;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return Math.hypot(p.x - wall.start.x, p.y - wall.start.y);
+    const t = Math.max(0, Math.min(1, ((p.x - wall.start.x) * dx + (p.y - wall.start.y) * dy) / lenSq));
+    return Math.hypot(p.x - (wall.start.x + t * dx), p.y - (wall.start.y + t * dy));
+  }
+
+  /** Keep a tapped camera out of walls/furniture and aim it into the room. */
+  function safeCameraPlacement(hit: THREE.Vector3) {
+    const clicked = { x: hit.x, y: hit.z };
+    if (!currentFloor || currentFloor.walls.length === 0) {
+      const target = controls?.target ?? new THREE.Vector3(hit.x + 200, 0, hit.z);
+      return { position: clicked, target: { x: target.x, y: target.z } };
+    }
+
+    const detected = detectRooms(currentFloor.walls);
+    const roomInfos = detected
+      .map((room) => ({ room, polygon: getRoomPolygon(room, currentFloor!.walls) }))
+      .filter((info) => info.polygon.length >= 3)
+      .map((info) => ({ ...info, center: roomCentroid(info.polygon) }));
+    const chosen = roomInfos.find((info) => pointInPolygon(clicked, info.polygon))
+      ?? roomInfos.sort((a, b) =>
+        Math.hypot(clicked.x - a.center.x, clicked.y - a.center.y)
+        - Math.hypot(clicked.x - b.center.x, clicked.y - b.center.y)
+      )[0];
+
+    if (!chosen) {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const wall of currentFloor.walls) for (const p of [wall.start, wall.end]) {
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      }
+      const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+      return { position: clicked, target: center };
+    }
+
+    const { polygon, center } = chosen;
+    const base = pointInPolygon(clicked, polygon) ? clicked : center;
+    const candidates = [base];
+    for (const t of [0.15, 0.3, 0.45, 0.6, 0.8, 1]) {
+      candidates.push({ x: base.x + (center.x - base.x) * t, y: base.y + (center.y - base.y) * t });
+    }
+    for (const radius of [50, 90, 130]) {
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        candidates.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
+      }
+    }
+
+    const scored = candidates
+      .filter((p) => pointInPolygon(p, polygon))
+      .map((p) => {
+        const wallClearance = Math.min(...currentFloor!.walls.map((wall) => distanceToSegment(p, wall) - (wall.thickness || 15) / 2));
+        const furnitureClearance = currentFloor!.furniture.length === 0 ? Infinity : Math.min(...currentFloor!.furniture.map((item) => {
+          const def = getCatalogItem(item.catalogId);
+          const width = item.width ?? def?.width ?? 60;
+          const depth = item.depth ?? def?.depth ?? 60;
+          return Math.hypot(p.x - item.position.x, p.y - item.position.y) - Math.hypot(width, depth) / 2;
+        }));
+        return { p, clearance: Math.min(wallClearance, furnitureClearance), distance: Math.hypot(p.x - base.x, p.y - base.y) };
+      });
+    const safe = scored.filter((item) => item.clearance >= 45).sort((a, b) => a.distance - b.distance)[0]
+      ?? scored.sort((a, b) => b.clearance - a.clearance)[0];
+    const position = safe?.p ?? center;
+
+    let target = center;
+    if (Math.hypot(target.x - position.x, target.y - position.y) < 80) {
+      const xs = polygon.map((p) => p.x), ys = polygon.map((p) => p.y);
+      const horizontal = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+      const distance = Math.min(180, Math.max(90, (horizontal ? Math.max(...xs) - Math.min(...xs) : Math.max(...ys) - Math.min(...ys)) * 0.3));
+      const optionA = horizontal ? { x: position.x + distance, y: position.y } : { x: position.x, y: position.y + distance };
+      const optionB = horizontal ? { x: position.x - distance, y: position.y } : { x: position.x, y: position.y - distance };
+      target = pointInPolygon(optionA, polygon) ? optionA : pointInPolygon(optionB, polygon) ? optionB : center;
+    }
+    return { position, target };
+  }
+
+  function beginCameraReposition() {
+    cameraPlacementMode = true;
+    cameraPlaced = false;
+    cameraPreviewOpen = false;
+    cameraPreviewWarning = null;
+    cameraYaw = 0;
+    cameraPitch = 0;
+    if (cameraHelper) {
+      wallGroup.remove(cameraHelper);
+      cameraHelper = null;
+    }
+    editMode = true;
+  }
+
   /** Phone entry point: one clear AI action, then one tap inside the room. */
   export function startMobileAIRender() {
     mobileViewMenuOpen = false;
@@ -589,10 +722,7 @@
       return;
     }
 
-    cameraPlacementMode = true;
-    cameraPreviewOpen = false;
-    cameraPlaced = false;
-    editMode = true; // enables the scene tap handler; disabled after placement on phone
+    beginCameraReposition();
   }
 
   const TIME_PRESETS = {
@@ -802,23 +932,27 @@
         const hit = new THREE.Vector3();
         if (raycaster.ray.intersectPlane(floorPlane, hit)) {
           if (!cameraPlaced) {
-            // First click: place camera position
-            cameraPosition = { x: hit.x, y: cameraHeight, z: hit.z };
-            const viewTarget = controls?.target;
-            const targetDX = (viewTarget?.x ?? hit.x + 200) - hit.x;
-            const targetDZ = (viewTarget?.z ?? hit.z) - hit.z;
+            // First click: keep the camera inside a room, clear of walls and furniture.
+            const placement = safeCameraPlacement(hit);
+            cameraPosition = { x: placement.position.x, y: cameraHeight, z: placement.position.y };
+            const targetDX = placement.target.x - placement.position.x;
+            const targetDZ = placement.target.y - placement.position.y;
             const targetLen = Math.hypot(targetDX, targetDZ) || 1;
             cameraBaseDir = { x: targetDX / targetLen, z: targetDZ / targetLen };
             cameraLookAt = {
-              x: hit.x + cameraBaseDir.x * 200,
+              x: placement.target.x,
               y: cameraHeight * 0.75,
-              z: hit.z + cameraBaseDir.z * 200,
+              z: placement.target.y,
             };
             cameraYaw = 0;
             cameraPitch = 0;
+            cameraPreviewWarning = null;
             cameraPlaced = true;
             updateInteriorCamera();
-            createCameraMarker(new THREE.Vector3(hit.x, 0, hit.z), new THREE.Vector3(hit.x + 200, 0, hit.z));
+            createCameraMarker(
+              new THREE.Vector3(placement.position.x, 0, placement.position.y),
+              new THREE.Vector3(placement.target.x, 0, placement.target.y),
+            );
             cameraPreviewOpen = true;
             cameraPreviewDirty = true;
             if (get(viewportKind) === 'phone') {
@@ -2250,6 +2384,7 @@
       cancelAnimationFrame(animId);
       document.removeEventListener('keydown', onKeyDown, false);
       document.removeEventListener('keyup', onKeyUp, false);
+      cameraPreviewRenderTarget?.dispose();
       renderer.dispose();
     };
   });
@@ -2474,7 +2609,14 @@
         onpointerup={() => { previewDragStart = null; }}
       >
         <canvas bind:this={cameraPreviewCanvas} width="384" height="216" class="w-full pointer-events-none"></canvas>
-        <div class="absolute bottom-1 left-1 text-[10px] text-white/50 pointer-events-none">Drag to look around</div>
+        {#if cameraPreviewWarning}
+          <div data-testid="camera-preview-warning" class="absolute inset-0 bg-[#101720]/95 px-6 flex flex-col items-center justify-center text-center pointer-events-none">
+            <div class="text-[16px] font-semibold text-amber-300">⚠️ 相機畫面未能顯示</div>
+            <div class="text-[13px] text-slate-300 mt-2">{cameraPreviewWarning}</div>
+          </div>
+        {:else}
+          <div class="absolute bottom-1 left-2 text-[11px] text-white/60 pointer-events-none">拖動畫面調整方向</div>
+        {/if}
       </div>
 
       <!-- Movement arrows -->
@@ -2518,7 +2660,7 @@
           </button>
           <button
             class="px-3 py-1.5 bg-gray-700 text-gray-300 text-sm rounded-lg hover:bg-gray-600 transition-colors"
-            onclick={() => { cameraPlacementMode = true; cameraPlaced = false; }}
+            onclick={beginCameraReposition}
           >
             Reposition
           </button>
@@ -2526,11 +2668,21 @@
       </div>
 
       {#if $viewportKind === 'phone'}
-        <div class="flex items-center gap-2 px-4 py-3 border-b border-gray-800">
-          <div class="flex-1 text-[14px] text-slate-300">拖動畫面調整方向</div>
-          <button class="h-11 px-4 rounded-xl bg-[#222d39] text-[14px] font-semibold text-white" onclick={() => { cameraPlacementMode = true; cameraPlaced = false; cameraPreviewOpen = false; editMode = true; }}>
-            重新選位
-          </button>
+        <div class="px-4 py-3 border-b border-gray-800 space-y-3">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 text-[14px] text-slate-300">拖動畫面調方向</div>
+            <button class="h-11 px-4 rounded-xl bg-[#222d39] text-[14px] font-semibold text-white" onclick={beginCameraReposition}>
+              重新選位
+            </button>
+          </div>
+          <div>
+            <div class="text-[13px] text-slate-400 mb-2">視角</div>
+            <div class="grid grid-cols-3 gap-2">
+              <button aria-label="AI camera wide angle" onclick={() => { cameraFOV = 100; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 100 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">廣角</button>
+              <button aria-label="AI camera normal angle" onclick={() => { cameraFOV = 80; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 80 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">正常</button>
+              <button aria-label="AI camera close angle" onclick={() => { cameraFOV = 60; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 60 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">近鏡</button>
+            </div>
+          </div>
         </div>
       {/if}
 
