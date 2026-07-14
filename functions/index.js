@@ -2,9 +2,10 @@ import { timingSafeEqual } from 'node:crypto';
 import { defineSecret } from 'firebase-functions/params';
 import { logger } from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
-import { RenderInputError, renderWithOpenAI } from './lib/openai-render.js';
+import { RenderInputError, validateRenderRequest } from './lib/render-input.js';
+import { RenderQuotaError, reserveRenderCredits } from './lib/render-quota.js';
+import { renderWithVertex } from './lib/vertex-render.js';
 
-const OPENAI_API_KEY = defineSecret('OPENAI_API_KEY');
 const AI_RENDER_ACCESS_TOKEN = defineSecret('AI_RENDER_ACCESS_TOKEN');
 
 const ALLOWED_ORIGINS = new Set([
@@ -34,7 +35,7 @@ function validBearer(header, expected) {
   return actual.length === wanted.length && timingSafeEqual(actual, wanted);
 }
 
-export const aiRender = onRequest({
+const VERTEX_RENDER_OPTIONS = {
   region: 'asia-east2',
   timeoutSeconds: 180,
   memory: '1GiB',
@@ -42,8 +43,10 @@ export const aiRender = onRequest({
   maxInstances: 1,
   concurrency: 1,
   cors: false,
-  secrets: [OPENAI_API_KEY, AI_RENDER_ACCESS_TOKEN],
-}, async (req, res) => {
+  secrets: [AI_RENDER_ACCESS_TOKEN],
+};
+
+async function handleVertexRender(req, res, logLabel) {
   const originAllowed = setCors(req, res);
   if (req.method === 'OPTIONS') {
     res.status(originAllowed ? 204 : 403).end();
@@ -63,18 +66,21 @@ export const aiRender = onRequest({
   }
 
   try {
-    const result = await renderWithOpenAI({
-      body: req.body,
-      apiKey: OPENAI_API_KEY.value(),
-    });
+    const input = validateRenderRequest(req.body);
+    const quota = await reserveRenderCredits({ quality: input.quality });
+    const result = await renderWithVertex({ body: req.body });
     res.set('Cache-Control', 'no-store');
-    res.status(200).json(result);
+    res.status(200).json({ ...result, quota });
   } catch (error) {
     if (error instanceof RenderInputError) {
       res.status(400).json({ error: error.message });
       return;
     }
-    logger.error('AI render failed', {
+    if (error instanceof RenderQuotaError) {
+      res.status(429).json({ error: error.message });
+      return;
+    }
+    logger.error(`${logLabel} render failed`, {
       message: error instanceof Error ? error.message : String(error),
       status: error?.status,
     });
@@ -85,4 +91,12 @@ export const aiRender = onRequest({
       error: error instanceof Error ? error.message : 'AI Render failed. Please try again.',
     });
   }
+}
+
+export const aiRender = onRequest(VERTEX_RENDER_OPTIONS, async (req, res) => {
+  await handleVertexRender(req, res, 'Nano Banana 2 production');
+});
+
+export const aiRenderCandidate = onRequest(VERTEX_RENDER_OPTIONS, async (req, res) => {
+  await handleVertexRender(req, res, 'Nano Banana 2 candidate');
 });

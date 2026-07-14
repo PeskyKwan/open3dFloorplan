@@ -410,7 +410,7 @@ await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRende
     body: JSON.stringify({
       imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
       mimeType: 'image/png',
-      model: 'gpt-image-2',
+      model: 'gemini-3.1-flash-image',
     }),
   });
 });
@@ -556,7 +556,7 @@ await page.getByAltText('AI Render').waitFor({ timeout: 5000 });
 await sleep(700);
 await check('mobile app sends only beta code to secure backend', renderRequest?.authorization === 'Bearer e2e-beta-code');
 await check('draft render sends low quality + a real camera preview', renderRequest?.body?.quality === 'low' && renderRequest?.body?.imageDataUrl?.startsWith('data:image/png;base64,') && renderRequest.body.imageDataUrl.length > 10000);
-await check('mock GPT Image 2 result displays', await page.getByAltText('AI Render').count() === 1);
+await check('mock Nano Banana 2 result displays', await page.getByAltText('AI Render').count() === 1);
 const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);
 await page.getByText('再整一張').tap();

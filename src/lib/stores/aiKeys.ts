@@ -1,6 +1,6 @@
 /** Gemini desktop-experiment key management.
- * OpenAI credentials must never live here; mobile OpenAI renders use the
- * server proxy in $lib/services/aiRender.
+ * Provider credentials must never live here; mobile renders use server-side
+ * Vertex IAM through the proxy in $lib/services/aiRender.
  */
 
 const GEMINI_KEY = 'o3d_gemini_key';

@@ -163,7 +163,7 @@
   const STYLE_OPTIONS = ['photorealistic', 'architectural visualization', 'interior design magazine', 'minimalist', 'scandinavian', 'industrial', 'mid-century modern', 'luxury'];
   const LIGHTING_OPTIONS = ['natural daylight', 'warm afternoon', 'golden hour', 'soft ambient', 'dramatic shadows', 'bright and airy', 'moody evening', 'studio lighting'];
   const MOOD_OPTIONS = ['warm and inviting', 'clean and modern', 'cozy', 'elegant', 'rustic charm', 'sophisticated', 'relaxed', 'vibrant'];
-  let aiProvider = $state<'gemini' | 'openai'>('openai');
+  let aiProvider = $state<'gemini' | 'server'>('server');
   let aiModel = $state('gemini-2.5-flash-image');
   const AI_MODELS = [
     { id: 'gemini-2.5-flash-image', name: 'Nano Banana (2.5 Flash)', desc: 'Fast & efficient image gen ✓' },
@@ -284,12 +284,12 @@
       return;
     }
 
-    // The native/phone app always uses the server-side OpenAI route so no
-    // provider API key is ever stored in the iOS bundle or WebView.
+    // The native/phone app always uses server-side Vertex IAM, so no provider
+    // API key is ever stored in the iOS bundle or WebView.
     if (get(viewportKind) !== 'phone' && aiProvider === 'gemini') {
       await runGeminiRender();
     } else {
-      await runOpenAIRender();
+      await runServerAIRender();
     }
   }
 
@@ -348,10 +348,10 @@
     }
   }
 
-  async function runOpenAIRender() {
+  async function runServerAIRender() {
     const accessToken = aiAccessCode.trim() || getAIRenderAccessToken();
     if (!accessToken) {
-      aiRenderError = '請先輸入 AI Render beta access code。OpenAI API key 只會放喺安全 server，唔會放入 iPhone。';
+      aiRenderError = '請先輸入 AI Render beta access code。AI model 由安全 Google Cloud server 呼叫，iPhone 冇 API key。';
       await revealAIRenderFeedback();
       return;
     }
@@ -2913,7 +2913,7 @@
               <div class="{$viewportKind === 'phone' ? 'text-[13px]' : 'text-[10px]'} text-gray-400 mt-0.5">保留間隔、傢俬同相機角度</div>
             </div>
             <span class="shrink-0 rounded-full bg-emerald-900/50 border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300">
-              {$viewportKind === 'phone' || aiProvider === 'openai' ? 'GPT Image 2' : 'Gemini'}
+              {$viewportKind === 'phone' || aiProvider === 'server' ? 'Nano Banana 2' : 'Gemini'}
             </span>
           </div>
 
@@ -2925,9 +2925,9 @@
                 onclick={() => { aiProvider = 'gemini'; }}
               >Gemini</button>
               <button
-                class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'openai' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
-                onclick={() => { aiProvider = 'openai'; }}
-              >OpenAI · Secure server</button>
+                class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'server' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
+                onclick={() => { aiProvider = 'server'; }}
+              >Nano Banana 2 · Secure server</button>
             </div>
           {/if}
 
@@ -3002,7 +3002,7 @@
           </label>
           {/if}
 
-          {#if $viewportKind === 'phone' || aiProvider === 'openai'}
+          {#if $viewportKind === 'phone' || aiProvider === 'server'}
             <div class="rounded-2xl border border-gray-700 bg-gray-800/60 {$viewportKind === 'phone' ? 'p-3 space-y-3' : 'p-2.5 space-y-2'}">
               <div class="flex items-center justify-between">
                 <span class="{$viewportKind === 'phone' ? 'text-[14px]' : 'text-[11px]'} font-medium text-gray-200">Beta access code</span>
@@ -3033,7 +3033,7 @@
                   </button>
                 </div>
               {/if}
-              <p class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} leading-relaxed text-gray-500">真正 OpenAI API key 只保存在 Firebase server；iPhone 冇 API key。</p>
+              <p class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} leading-relaxed text-gray-500">AI model 由 Firebase server 用 Google Cloud IAM 呼叫；iPhone 冇 API key。</p>
             </div>
 
             <div>

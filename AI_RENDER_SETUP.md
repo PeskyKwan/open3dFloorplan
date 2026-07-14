@@ -1,47 +1,43 @@
 # Secure AI Render setup
 
 The iPhone sends only the current 3D camera preview, render instructions, and a
-revocable beta access code to the Firebase Function. The OpenAI API key stays in
-Firebase Secret Manager and is never bundled into Capacitor or stored in the
-WebView.
+revocable beta access code to the Firebase Function. Google Cloud IAM stays on
+the server; no model API key is bundled into Capacitor or stored in the WebView.
 
 ## Architecture
 
-`iPhone camera preview → Firebase aiRender → OpenAI Image Edits (gpt-image-2) → JPEG result`
+`iPhone camera preview → Firebase aiRender (Hong Kong) → Vertex Nano Banana 2 → JPEG result`
 
-- Draft is the default (`quality=low`) to keep iteration cheap.
-- Final render uses `quality=high` only when the user explicitly chooses it.
-- The beta access code protects the private endpoint. It is intentionally
-  separate from the OpenAI credential, so it can be rotated without rotating
-  the billing key.
-- The Firebase function is capped at one instance and one concurrent render,
-  with zero warm instances when idle, to limit private-beta cloud exposure.
+- Model: `gemini-3.1-flash-image` (Nano Banana 2), official Vertex `global`
+  model endpoint.
+- Function and Firestore quota database: `asia-east2` (Hong Kong).
+- Quick draft: 1K, one credit. High quality: 2K, two credits.
+- Hard server quota: 10 credits per Hong Kong calendar day and 60 credits per
+  Hong Kong calendar month. Attempts reserve credits before the model call so
+  retries or provider failures cannot bypass the spend guard.
+- The beta access code protects the private endpoint and can be rotated without
+  changing Google Cloud IAM.
+- The function is capped at one instance and one concurrent render, with zero
+  warm instances when idle.
 
 ## One-time owner setup
 
-1. Create a dedicated OpenAI **project** API key and set project budget alerts.
-   Do not paste the key into the app or commit it.
-2. Authenticate Firebase CLI:
+Current Firebase project: `openplan3d-55cb6`.
 
-   ```bash
-   npx firebase-tools login
-   ```
-
-3. Store the OpenAI key when the CLI prompts securely:
-
-   ```bash
-   npx firebase-tools functions:secrets:set OPENAI_API_KEY
-   ```
-
+1. Enable `aiplatform.googleapis.com` and `firestore.googleapis.com`.
+2. Create Firestore `(default)` in `asia-east2`, Standard edition. Keep client
+   rules closed; quota writes use the Firebase Admin SDK.
+3. Give the Cloud Function runtime service account only the Vertex prediction
+   permission it needs. The current project runtime account already has access.
 4. Generate a random beta access code, keep a copy for the iPhone, then store it
-   as the second secret:
+   securely:
 
    ```bash
    openssl rand -base64 32
    npx firebase-tools functions:secrets:set AI_RENDER_ACCESS_TOKEN
    ```
 
-5. Install and deploy the function:
+5. Install and deploy:
 
    ```bash
    npm --prefix functions install
@@ -49,23 +45,23 @@ WebView.
    ```
 
 6. On iPhone: 3D → place Interior Camera → **AI Render** → paste the beta access
-   code → **Save**. Never paste the OpenAI key there.
+   code → **Save**. Never paste a Google API key there.
 
-## Local or alternate backend
+## Local or candidate backend
 
 The mobile build defaults to:
 
 `https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender`
 
-Override it at build time when needed:
+Override it at build time when testing the independent candidate:
 
 ```bash
-VITE_AI_RENDER_API_URL=https://example.com/ai-render npm run build:mobile
+VITE_AI_RENDER_API_URL=https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRenderCandidate npm run build:mobile
 ```
 
 ## Before a public App Store release
 
 The access-code gate is suitable for Sum's private beta/TestFlight. Before a
 public release, replace it with real user authentication plus Firebase App
-Check/App Attest and server-side per-user quotas. Keep OpenAI project spending
-limits and alerts enabled.
+Check/App Attest and per-user quotas. Keep Google Cloud billing alerts enabled;
+budgets are alerts, while the Firestore credit counter is the hard app guard.

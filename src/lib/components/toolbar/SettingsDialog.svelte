@@ -341,10 +341,10 @@
               </ol>
             </div>
 
-            <!-- Secure OpenAI render proxy access -->
+            <!-- Secure server render access -->
             <div class="border-t border-gray-200 dark:border-gray-700 pt-4">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">OpenAI AI Render — Beta Access Code</span>
-              <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">The real OpenAI API key stays on the Firebase server. This removable code only unlocks the private beta render endpoint.</p>
+              <span class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">Nano Banana 2 AI Render — Beta Access Code</span>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">Firebase calls Google Cloud with server-side IAM. This removable code only unlocks the private beta render endpoint.</p>
               <div class="flex gap-2">
                 <div class="relative flex-1">
                   <input
@@ -380,7 +380,7 @@
                   </button>
                 {/if}
               </div>
-              <p class="text-xs text-emerald-600 dark:text-emerald-400 mt-3">✓ Safe for the iPhone build: no OpenAI credential is stored in the app.</p>
+              <p class="text-xs text-emerald-600 dark:text-emerald-400 mt-3">✓ Safe for the iPhone build: no provider API credential is stored in the app.</p>
             </div>
           </div>
         {/if}
