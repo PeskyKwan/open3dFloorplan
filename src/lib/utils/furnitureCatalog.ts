@@ -22,8 +22,9 @@ export const furnitureCatalog: FurnitureDef[] = [
   { id: 'bookshelf', name: 'Bookshelf', category: 'Living Room', icon: '📚', color: '#92400e', width: 80, depth: 30, height: 180 },
   { id: 'side_table', name: 'Side Table', category: 'Living Room', icon: '🪑', color: '#a16207', width: 50, depth: 50, height: 55 },
   // Bedroom
-  { id: 'bed_queen', name: 'Queen Bed', category: 'Bedroom', icon: '🛏️', color: '#60a5fa', width: 200, depth: 150, height: 50 },
-  { id: 'bed_twin', name: 'Twin Bed', category: 'Bedroom', icon: '🛏️', color: '#93c5fd', width: 190, depth: 100, height: 50 },
+  // Beds face along +depth: width is side-to-side, depth is head-to-foot.
+  { id: 'bed_queen', name: 'Queen Bed', category: 'Bedroom', icon: '🛏️', color: '#60a5fa', width: 152, depth: 203, height: 50 },
+  { id: 'bed_twin', name: 'Twin Bed', category: 'Bedroom', icon: '🛏️', color: '#93c5fd', width: 100, depth: 190, height: 50 },
   { id: 'nightstand', name: 'Nightstand', category: 'Bedroom', icon: '🛏️', color: '#a16207', width: 50, depth: 40, height: 55 },
   { id: 'dresser', name: 'Dresser', category: 'Bedroom', icon: '🗄️', color: '#92400e', width: 120, depth: 50, height: 80 },
   { id: 'wardrobe', name: 'Wardrobe', category: 'Bedroom', icon: '🗄️', color: '#a16207', width: 120, depth: 60, height: 200 },

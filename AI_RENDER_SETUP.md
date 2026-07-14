@@ -59,6 +59,22 @@ Override it at build time when testing the independent candidate:
 VITE_AI_RENDER_API_URL=https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRenderCandidate npm run build:mobile
 ```
 
+## Optional GPT Image 2 comparison
+
+`aiRenderOpenAIComparison` is an isolated, access-code protected A/B endpoint.
+It runs in `us-central1` because OpenAI rejects Cloud Functions egress from Hong
+Kong; the normal app endpoint remains Nano Banana 2 in `asia-east2`.
+
+It requires the existing `OPENAI_API_KEY` secret and shares the same Firestore
+daily/monthly credit reservation as production. Deploy it independently:
+
+```bash
+npx firebase-tools deploy --only functions:aiRenderOpenAIComparison --project openplan3d-55cb6
+```
+
+Do not point a production build at this endpoint without first deciding whether
+quick drafts, high-quality renders, or both should use OpenAI.
+
 ## Before a public App Store release
 
 The access-code gate is suitable for Sum's private beta/TestFlight. Before a

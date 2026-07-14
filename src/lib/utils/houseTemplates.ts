@@ -101,7 +101,8 @@ function createStudioApartment(): Project {
   ];
 
   const fur: FurnitureItem[] = [
-    furniture('bed_twin', 400, 80, 0),
+    // Keep the correctly oriented 100x190cm bed clear of the top wall.
+    furniture('bed_twin', 400, 110, 0),
     furniture('loveseat', 300, 300, 0),
     furniture('dining_table', 480, 380, 0),
     furniture('toilet', 60, 400, 0),

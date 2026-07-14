@@ -28,7 +28,15 @@ test('calls GPT Image 2 edit endpoint without exposing the API key in output', a
     return {
       ok: true,
       status: 200,
-      json: async () => ({ data: [{ b64_json: 'rendered-image' }] }),
+      json: async () => ({
+        data: [{ b64_json: 'rendered-image' }],
+        usage: {
+          total_tokens: 100,
+          input_tokens: 60,
+          output_tokens: 40,
+          input_tokens_details: { text_tokens: 10, image_tokens: 50 },
+        },
+      }),
     };
   };
 
@@ -47,5 +55,6 @@ test('calls GPT Image 2 edit endpoint without exposing the API key in output', a
   assert.equal(captured.options.body.get('model'), 'gpt-image-2');
   assert.equal(captured.options.body.get('quality'), 'high');
   assert.equal(result.imageBase64, 'rendered-image');
+  assert.equal(result.usage.input_tokens_details.image_tokens, 50);
   assert.equal(JSON.stringify(result).includes('server-secret'), false);
 });

@@ -49,5 +49,6 @@ export async function renderWithOpenAI({ body, apiKey, fetchImpl = fetch }) {
     imageBase64,
     mimeType: 'image/jpeg',
     model: MODEL,
+    ...(data?.usage && typeof data.usage === 'object' ? { usage: data.usage } : {}),
   };
 }
