@@ -418,8 +418,14 @@ await page.getByTestId('mobile-ai-render').tap();
 const canvas3d = page.locator('canvas').last();
 const canvas3dBox = await canvas3d.boundingBox();
 if (canvas3dBox) {
-  await canvas3d.tap({ position: { x: canvas3dBox.width * 0.5, y: canvas3dBox.height * 0.65 } });
-  await sleep(800);
+  const placementCandidates = [
+    [0.5, 0.65], [0.4, 0.55], [0.6, 0.55], [0.35, 0.7], [0.65, 0.7], [0.5, 0.8],
+  ];
+  for (const [x, y] of placementCandidates) {
+    await canvas3d.tap({ position: { x: canvas3dBox.width * x, y: canvas3dBox.height * y } });
+    await sleep(350);
+    if (await page.getByTestId('ai-camera-panel').count()) break;
+  }
 }
 await sleep(400);
 const aiPanel = page.getByTestId('ai-render-panel');
@@ -442,6 +448,8 @@ const previewHealth = await aiScroller.locator('canvas').first().evaluate((canva
 await check('interior camera preview contains visible pixels (not black)', previewHealth.total > 0 && previewHealth.visible / previewHealth.total > 0.05 && await page.getByTestId('camera-preview-warning').count() === 0);
 const previewGesture = page.getByTestId('camera-preview-gesture');
 const gestureBox = await previewGesture.boundingBox();
+await check('AI camera identifies the current room',
+  (await page.getByTestId('camera-room-label').textContent())?.includes('Room'));
 const yawBefore = Number(await previewGesture.getAttribute('data-camera-yaw'));
 if (gestureBox) {
   await page.mouse.move(gestureBox.x + gestureBox.width * 0.5, gestureBox.y + gestureBox.height * 0.5);
@@ -452,14 +460,30 @@ if (gestureBox) {
 }
 const yawAfter = Number(await previewGesture.getAttribute('data-camera-yaw'));
 await check('single-finger/mouse drag rotates the AI camera', !!gestureBox && Math.abs(yawAfter - yawBefore) > 5);
+// Return to the original into-room view before testing floor navigation.
+if (gestureBox) {
+  await page.mouse.move(gestureBox.x + gestureBox.width * 0.5, gestureBox.y + gestureBox.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(gestureBox.x + gestureBox.width * 0.25, gestureBox.y + gestureBox.height * 0.6, { steps: 6 });
+  await page.mouse.up();
+  await sleep(300);
+}
 const positionBeforeNavigate = {
   x: Number(await previewGesture.getAttribute('data-camera-x')),
   z: Number(await previewGesture.getAttribute('data-camera-z')),
 };
 const navigateCountBefore = Number(await previewGesture.getAttribute('data-camera-navigate-count'));
 if (gestureBox) {
-  await previewGesture.dblclick({ position: { x: gestureBox.width * 0.5, y: gestureBox.height * 0.8 }, delay: 80 });
-  await sleep(500);
+  const floorCandidates = [
+    [0.5, 0.65], [0.35, 0.65], [0.65, 0.65],
+    [0.5, 0.75], [0.25, 0.75], [0.75, 0.75],
+    [0.35, 0.85], [0.65, 0.85],
+  ];
+  for (const [x, y] of floorCandidates) {
+    await previewGesture.dblclick({ position: { x: gestureBox.width * x, y: gestureBox.height * y }, delay: 80 });
+    await sleep(250);
+    if (Number(await previewGesture.getAttribute('data-camera-navigate-count')) > navigateCountBefore) break;
+  }
 }
 const positionAfterNavigate = {
   x: Number(await previewGesture.getAttribute('data-camera-x')),
@@ -469,6 +493,40 @@ const navigateCountAfter = Number(await previewGesture.getAttribute('data-camera
 await check('double tap moves the AI camera toward the tapped floor',
   !!gestureBox && navigateCountAfter === navigateCountBefore + 1 &&
   Math.hypot(positionAfterNavigate.x - positionBeforeNavigate.x, positionAfterNavigate.z - positionBeforeNavigate.z) > 10);
+const positionBeforeRejectedNavigate = {
+  x: Number(await previewGesture.getAttribute('data-camera-x')),
+  z: Number(await previewGesture.getAttribute('data-camera-z')),
+};
+const countBeforeRejectedNavigate = Number(await previewGesture.getAttribute('data-camera-navigate-count'));
+if (gestureBox) {
+  await previewGesture.dblclick({ position: { x: gestureBox.width * 0.5, y: gestureBox.height * 0.12 }, delay: 80 });
+  await sleep(250);
+}
+const positionAfterRejectedNavigate = {
+  x: Number(await previewGesture.getAttribute('data-camera-x')),
+  z: Number(await previewGesture.getAttribute('data-camera-z')),
+};
+await check('double tap outside visible floor never teleports through walls',
+  Number(await previewGesture.getAttribute('data-camera-navigate-count')) === countBeforeRejectedNavigate &&
+  Math.hypot(
+    positionAfterRejectedNavigate.x - positionBeforeRejectedNavigate.x,
+    positionAfterRejectedNavigate.z - positionBeforeRejectedNavigate.z,
+  ) < 1);
+await check('rejected camera navigation explains what happened',
+  (await page.getByTestId('camera-navigation-notice').textContent())?.includes('唔係地板'));
+const previousPositionButton = page.getByLabel('AI camera previous position');
+const previousPositionWasEnabled = await previousPositionButton.isEnabled();
+if (previousPositionWasEnabled) {
+  await previousPositionButton.tap();
+  await sleep(300);
+}
+const positionAfterBack = {
+  x: Number(await previewGesture.getAttribute('data-camera-x')),
+  z: Number(await previewGesture.getAttribute('data-camera-z')),
+};
+await check('Previous Position restores the camera after entering a room',
+  previousPositionWasEnabled &&
+  Math.hypot(positionAfterBack.x - positionBeforeNavigate.x, positionAfterBack.z - positionBeforeNavigate.z) < 2);
 await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
 await page.getByLabel('AI camera zoom out').tap(); await sleep(250);
 await check('Simulator has a visible zoom-out button', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);

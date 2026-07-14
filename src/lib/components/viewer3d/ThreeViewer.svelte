@@ -15,7 +15,13 @@
   import { createFurnitureModelWithGLB } from '$lib/utils/furnitureModelLoader';
   import { addFurniture } from '$lib/stores/project';
   import { detectRooms, getRoomPolygon, roomCentroid } from '$lib/utils/roomDetection';
-  import { pointInPolygon } from '$lib/utils/hitTesting';
+  import {
+    findCameraRoom,
+    findReachableCameraPlacement,
+    findSafeCameraPlacement,
+    getCameraRoomInfos,
+    type SafeCameraPlacement,
+  } from '$lib/utils/cameraNavigation';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import { viewportKind } from '$lib/stores/viewport';
@@ -123,6 +129,19 @@
   let previewLastTap: { time: number; x: number; y: number } | null = null;
   let previewSafariPinchFOV: number | null = null;
   let cameraNavigateCount = $state(0);
+  interface CameraNavigationSnapshot {
+    position: { x: number; y: number; z: number };
+    lookAt: { x: number; y: number; z: number };
+    baseDir: { x: number; z: number };
+    yaw: number;
+    pitch: number;
+    fov: number;
+    roomLabel: string;
+  }
+  let cameraNavigationHistory = $state<CameraNavigationSnapshot[]>([]);
+  let cameraNavigationNotice = $state<string | null>(null);
+  let cameraRoomLabel = $state('未識別空間');
+  let cameraNavigationNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   let aiRenderOpen = $state(false);
   let aiRendering = $state(false);
   let aiRenderResult = $state<string | null>(null);
@@ -421,6 +440,48 @@
     setCameraFOV(cameraFOV + (direction === 'out' ? 6 : -6));
   }
 
+  function showCameraNavigationNotice(message: string) {
+    cameraNavigationNotice = message;
+    if (cameraNavigationNoticeTimer) clearTimeout(cameraNavigationNoticeTimer);
+    cameraNavigationNoticeTimer = setTimeout(() => {
+      cameraNavigationNotice = null;
+      cameraNavigationNoticeTimer = null;
+    }, 3200);
+  }
+
+  function currentCameraSnapshot(): CameraNavigationSnapshot {
+    return {
+      position: { ...cameraPosition },
+      lookAt: { ...cameraLookAt },
+      baseDir: { ...cameraBaseDir },
+      yaw: cameraYaw,
+      pitch: cameraPitch,
+      fov: cameraFOV,
+      roomLabel: cameraRoomLabel,
+    };
+  }
+
+  function restorePreviousCameraPosition() {
+    const previous = cameraNavigationHistory[cameraNavigationHistory.length - 1];
+    if (!previous) {
+      showCameraNavigationNotice('未有上一個位置。');
+      return;
+    }
+    cameraNavigationHistory = cameraNavigationHistory.slice(0, -1);
+    cameraPosition = { ...previous.position };
+    cameraLookAt = { ...previous.lookAt };
+    cameraBaseDir = { ...previous.baseDir };
+    cameraYaw = previous.yaw;
+    cameraPitch = previous.pitch;
+    cameraFOV = previous.fov;
+    cameraRoomLabel = previous.roomLabel;
+    cameraPreviewWarning = null;
+    updateInteriorCamera();
+    updateCameraMarkerFromState();
+    cameraPreviewDirty = true;
+    showCameraNavigationNotice('已返回上一個位置。');
+  }
+
   function previewZoomEvents(node: HTMLElement) {
     const onWheel = (event: WheelEvent) => previewWheel(event);
     const onGestureStart = (event: Event) => {
@@ -465,43 +526,31 @@
     );
     previewRaycaster.setFromCamera(previewPoint, interiorCamera);
 
-    let destination: THREE.Vector3 | null = null;
     const floorHit = new THREE.Vector3();
-    if (previewRaycaster.ray.intersectPlane(floorPlane, floorHit)) {
-      destination = floorHit;
-    } else {
-      const flatDirection = new THREE.Vector2(previewRaycaster.ray.direction.x, previewRaycaster.ray.direction.z);
-      if (flatDirection.lengthSq() > 0.0001) {
-        flatDirection.normalize();
-        const roomInfos = detectRooms(currentFloor.walls)
-          .map((room) => ({ polygon: getRoomPolygon(room, currentFloor!.walls) }))
-          .filter((info) => info.polygon.length >= 3);
-        const currentPoint = { x: cameraPosition.x, y: cameraPosition.z };
-        const currentRoom = roomInfos.find((info) => pointInPolygon(currentPoint, info.polygon));
-
-        for (let distance = 80; distance <= 1200; distance += 20) {
-          const point = {
-            x: cameraPosition.x + flatDirection.x * distance,
-            y: cameraPosition.z + flatDirection.y * distance,
-          };
-          const room = roomInfos.find((info) => pointInPolygon(point, info.polygon));
-          if (room && room !== currentRoom) {
-            destination = new THREE.Vector3(point.x, 0, point.y);
-            break;
-          }
-        }
-
-        destination ??= new THREE.Vector3(
-          cameraPosition.x + flatDirection.x * 180,
-          0,
-          cameraPosition.z + flatDirection.y * 180,
-        );
-      }
+    if (!previewRaycaster.ray.intersectPlane(floorPlane, floorHit)) {
+      showCameraNavigationNotice('嗰度唔係地板。請雙 tap 可見地板或門口下方。');
+      return;
     }
 
-    if (!destination) return;
-    placeInteriorCameraAt(destination);
+    const destination = { x: floorHit.x, y: floorHit.z };
+    const distance = Math.hypot(destination.x - cameraPosition.x, destination.y - cameraPosition.z);
+    if (distance < 35) {
+      showCameraNavigationNotice('位置太近，請雙 tap 遠少少嘅地板。');
+      return;
+    }
+    const placement = findReachableCameraPlacement(
+      currentFloor,
+      { x: cameraPosition.x, y: cameraPosition.z },
+      destination,
+    );
+    if (!placement) {
+      showCameraNavigationNotice('前面冇可達安全位置；請轉向門口或另一塊地板。');
+      return;
+    }
+
+    applyCameraPlacement(placement, true);
     cameraNavigateCount += 1;
+    showCameraNavigationNotice(`已前往 ${placement.room.room.name}；需要時可按「上一位置」。`);
   }
 
   function previewPointerDown(e: PointerEvent) {
@@ -786,87 +835,13 @@
   let floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); // y=0 plane
   let ghostIntersection = new THREE.Vector3();
 
-  function distanceToSegment(p: { x: number; y: number }, wall: Wall): number {
-    const dx = wall.end.x - wall.start.x;
-    const dy = wall.end.y - wall.start.y;
-    const lenSq = dx * dx + dy * dy;
-    if (lenSq === 0) return Math.hypot(p.x - wall.start.x, p.y - wall.start.y);
-    const t = Math.max(0, Math.min(1, ((p.x - wall.start.x) * dx + (p.y - wall.start.y) * dy) / lenSq));
-    return Math.hypot(p.x - (wall.start.x + t * dx), p.y - (wall.start.y + t * dy));
-  }
-
-  /** Keep a tapped camera out of walls/furniture and aim it into the room. */
-  function safeCameraPlacement(hit: THREE.Vector3) {
-    const clicked = { x: hit.x, y: hit.z };
-    if (!currentFloor || currentFloor.walls.length === 0) {
-      const target = controls?.target ?? new THREE.Vector3(hit.x + 200, 0, hit.z);
-      return { position: clicked, target: { x: target.x, y: target.z } };
+  function applyCameraPlacement(placement: SafeCameraPlacement, remember = false) {
+    if (remember) {
+      cameraNavigationHistory = [
+        ...cameraNavigationHistory.slice(-11),
+        currentCameraSnapshot(),
+      ];
     }
-
-    const detected = detectRooms(currentFloor.walls);
-    const roomInfos = detected
-      .map((room) => ({ room, polygon: getRoomPolygon(room, currentFloor!.walls) }))
-      .filter((info) => info.polygon.length >= 3)
-      .map((info) => ({ ...info, center: roomCentroid(info.polygon) }));
-    const chosen = roomInfos.find((info) => pointInPolygon(clicked, info.polygon))
-      ?? roomInfos.sort((a, b) =>
-        Math.hypot(clicked.x - a.center.x, clicked.y - a.center.y)
-        - Math.hypot(clicked.x - b.center.x, clicked.y - b.center.y)
-      )[0];
-
-    if (!chosen) {
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const wall of currentFloor.walls) for (const p of [wall.start, wall.end]) {
-        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
-        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
-      }
-      const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-      return { position: clicked, target: center };
-    }
-
-    const { polygon, center } = chosen;
-    const base = pointInPolygon(clicked, polygon) ? clicked : center;
-    const candidates = [base];
-    for (const t of [0.15, 0.3, 0.45, 0.6, 0.8, 1]) {
-      candidates.push({ x: base.x + (center.x - base.x) * t, y: base.y + (center.y - base.y) * t });
-    }
-    for (const radius of [50, 90, 130]) {
-      for (let i = 0; i < 8; i++) {
-        const a = i * Math.PI / 4;
-        candidates.push({ x: center.x + Math.cos(a) * radius, y: center.y + Math.sin(a) * radius });
-      }
-    }
-
-    const scored = candidates
-      .filter((p) => pointInPolygon(p, polygon))
-      .map((p) => {
-        const wallClearance = Math.min(...currentFloor!.walls.map((wall) => distanceToSegment(p, wall) - (wall.thickness || 15) / 2));
-        const furnitureClearance = currentFloor!.furniture.length === 0 ? Infinity : Math.min(...currentFloor!.furniture.map((item) => {
-          const def = getCatalogItem(item.catalogId);
-          const width = item.width ?? def?.width ?? 60;
-          const depth = item.depth ?? def?.depth ?? 60;
-          return Math.hypot(p.x - item.position.x, p.y - item.position.y) - Math.hypot(width, depth) / 2;
-        }));
-        return { p, clearance: Math.min(wallClearance, furnitureClearance), distance: Math.hypot(p.x - base.x, p.y - base.y) };
-      });
-    const safe = scored.filter((item) => item.clearance >= 45).sort((a, b) => a.distance - b.distance)[0]
-      ?? scored.sort((a, b) => b.clearance - a.clearance)[0];
-    const position = safe?.p ?? center;
-
-    let target = center;
-    if (Math.hypot(target.x - position.x, target.y - position.y) < 80) {
-      const xs = polygon.map((p) => p.x), ys = polygon.map((p) => p.y);
-      const horizontal = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
-      const distance = Math.min(180, Math.max(90, (horizontal ? Math.max(...xs) - Math.min(...xs) : Math.max(...ys) - Math.min(...ys)) * 0.3));
-      const optionA = horizontal ? { x: position.x + distance, y: position.y } : { x: position.x, y: position.y + distance };
-      const optionB = horizontal ? { x: position.x - distance, y: position.y } : { x: position.x, y: position.y - distance };
-      target = pointInPolygon(optionA, polygon) ? optionA : pointInPolygon(optionB, polygon) ? optionB : center;
-    }
-    return { position, target };
-  }
-
-  function placeInteriorCameraAt(hit: THREE.Vector3) {
-    const placement = safeCameraPlacement(hit);
     cameraPosition = { x: placement.position.x, y: cameraHeight, z: placement.position.y };
     const targetDX = placement.target.x - placement.position.x;
     const targetDZ = placement.target.y - placement.position.y;
@@ -879,6 +854,7 @@
     };
     cameraYaw = 0;
     cameraPitch = 0;
+    cameraRoomLabel = `${placement.room.room.name} · ${placement.room.room.area} m²`;
     cameraPreviewWarning = null;
     cameraPlaced = true;
     updateInteriorCamera();
@@ -890,6 +866,25 @@
     cameraPreviewDirty = true;
   }
 
+  /** Place only on a real detected room floor, clear of walls and furniture. */
+  function placeInteriorCameraAt(hit: THREE.Vector3): boolean {
+    if (!currentFloor) return false;
+    const clicked = { x: hit.x, y: hit.z };
+    const room = findCameraRoom(clicked, getCameraRoomInfos(currentFloor.walls));
+    if (!room) {
+      showCameraNavigationNotice('嗰度唔係房間地板，請撳房間中間附近。');
+      return false;
+    }
+    const placement = findSafeCameraPlacement(currentFloor, clicked, room);
+    if (!placement) {
+      showCameraNavigationNotice('嗰度太近牆或傢俬，請揀另一個位置。');
+      return false;
+    }
+    cameraNavigationHistory = [];
+    applyCameraPlacement(placement);
+    return true;
+  }
+
   function beginCameraReposition() {
     cameraPlacementMode = true;
     cameraPlaced = false;
@@ -897,6 +892,9 @@
     cameraPreviewWarning = null;
     cameraYaw = 0;
     cameraPitch = 0;
+    cameraNavigationHistory = [];
+    cameraNavigationNotice = null;
+    cameraRoomLabel = '未識別空間';
     if (cameraHelper) {
       wallGroup.remove(cameraHelper);
       cameraHelper = null;
@@ -1133,7 +1131,7 @@
         if (raycaster.ray.intersectPlane(floorPlane, hit)) {
           if (!cameraPlaced) {
             // First click: keep the camera inside a room, clear of walls and furniture.
-            placeInteriorCameraAt(hit);
+            if (!placeInteriorCameraAt(hit)) return;
             if (get(viewportKind) === 'phone') {
               cameraPlacementMode = false;
               editMode = false;
@@ -2563,6 +2561,7 @@
       cancelAnimationFrame(animId);
       document.removeEventListener('keydown', onKeyDown, false);
       document.removeEventListener('keyup', onKeyUp, false);
+      if (cameraNavigationNoticeTimer) clearTimeout(cameraNavigationNoticeTimer);
       cameraPreviewRenderTarget?.dispose();
       renderer.dispose();
     };
@@ -2744,7 +2743,10 @@
     <div class={$viewportKind === 'phone'
       ? 'absolute top-20 inset-x-3 z-50 bg-[#112b4d]/95 text-white px-4 py-4 rounded-2xl text-[16px] font-semibold text-center shadow-xl'
       : 'absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-black/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm'}>
-      {$viewportKind === 'phone' ? '撳房間入面一個位置，開始 AI Render' : '📷 Click on the floor to place camera position'}
+      <div>{$viewportKind === 'phone' ? '撳房間入面一個位置，開始 AI Render' : '📷 Click on the floor to place camera position'}</div>
+      {#if cameraNavigationNotice}
+        <div data-testid="camera-navigation-notice" class="mt-2 text-[13px] font-medium text-amber-300">{cameraNavigationNotice}</div>
+      {/if}
     </div>
   {:else if cameraPlacementMode && cameraPlaced}
     <div class="absolute top-16 left-1/2 -translate-x-1/2 z-50 bg-black/80 text-white px-4 py-2 rounded-lg text-sm backdrop-blur-sm">
@@ -2764,14 +2766,17 @@
         : 'width: 420px; max-height: calc(100vh - 8rem);'}
     >
       <div class="z-10 shrink-0 flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-[#101720]/95 backdrop-blur-sm">
-        <span class="text-white {$viewportKind === 'phone' ? 'text-[18px] font-bold' : 'text-sm font-medium'}">{$viewportKind === 'phone' ? '✨ AI Render' : '📷 Interior Camera'}</span>
+        <div>
+          <div class="text-white {$viewportKind === 'phone' ? 'text-[18px] font-bold' : 'text-sm font-medium'}">{$viewportKind === 'phone' ? '✨ AI Render' : '📷 Interior Camera'}</div>
+          <div data-testid="camera-room-label" class="mt-0.5 text-[11px] text-slate-400">目前：{cameraRoomLabel}</div>
+        </div>
         <div class="flex gap-2">
           {#if $viewportKind !== 'phone'}
             <button class="text-xs text-blue-400 hover:text-blue-300" onclick={() => { aiRenderOpen = !aiRenderOpen; }}>
               {aiRenderOpen ? 'Hide AI' : '✨ AI Render'}
             </button>
           {/if}
-          <button class="w-10 h-10 rounded-full bg-gray-800 text-gray-300 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
+          <button class="w-10 h-10 rounded-full bg-gray-800 text-gray-300 hover:text-white text-lg leading-none" onclick={() => { cancelAIRender(); cameraPreviewOpen = false; if (cameraHelper) { wallGroup.remove(cameraHelper); cameraHelper = null; } cameraPlaced = false; cameraNavigationHistory = []; cameraNavigationNotice = null; cameraRoomLabel = '未識別空間'; aiRenderOpen = false; aiRenderResult = null; aiRenderError = null; }} aria-label="Close camera">✕</button>
         </div>
       </div>
       <div
@@ -2789,6 +2794,7 @@
         data-camera-x={cameraPosition.x.toFixed(1)}
         data-camera-z={cameraPosition.z.toFixed(1)}
         data-camera-navigate-count={cameraNavigateCount}
+        data-camera-room={cameraRoomLabel}
         class="relative cursor-grab active:cursor-grabbing touch-none select-none"
         style="touch-action: none;"
         use:previewZoomEvents
@@ -2805,6 +2811,11 @@
           </div>
         {:else}
           <div class="absolute bottom-1 left-2 text-[11px] text-white/80 pointer-events-none">拖動轉方向 · 雙 tap 地板行去嗰度</div>
+        {/if}
+        {#if cameraNavigationNotice}
+          <div data-testid="camera-navigation-notice" class="absolute top-2 inset-x-2 rounded-lg bg-slate-950/90 border border-slate-600 px-3 py-2 text-center text-[12px] font-medium text-white shadow-lg pointer-events-none">
+            {cameraNavigationNotice}
+          </div>
         {/if}
       </div>
 
@@ -2858,9 +2869,17 @@
 
       {#if $viewportKind === 'phone'}
         <div class="px-4 py-3 border-b border-gray-800 space-y-3">
+          <div class="text-[13px] text-slate-400">拖動轉方向 · 雙 tap 可見地板行過去</div>
           <div class="flex items-center gap-2">
-            <div class="flex-1 text-[14px] text-slate-300">拖動畫面調方向</div>
-            <button class="h-11 px-4 rounded-xl bg-[#222d39] text-[14px] font-semibold text-white" onclick={beginCameraReposition}>
+            <button
+              aria-label="AI camera previous position"
+              disabled={cameraNavigationHistory.length === 0}
+              class="flex-1 h-11 px-3 rounded-xl text-[14px] font-semibold {cameraNavigationHistory.length > 0 ? 'bg-[#222d39] text-white' : 'bg-[#18212b] text-slate-600'}"
+              onclick={restorePreviousCameraPosition}
+            >
+              ← 上一位置
+            </button>
+            <button class="flex-1 h-11 px-3 rounded-xl bg-[#222d39] text-[14px] font-semibold text-white" onclick={beginCameraReposition}>
               重新選位
             </button>
           </div>
