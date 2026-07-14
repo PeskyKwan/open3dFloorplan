@@ -22,6 +22,7 @@
     getCameraRoomInfos,
     type SafeCameraPlacement,
   } from '$lib/utils/cameraNavigation';
+  import { CAMERA_PREVIEW_ASPECT, horizontalToVerticalFOV } from '$lib/utils/cameraProjection';
   import { getMaterial } from '$lib/utils/materials';
   import { getWallTextureCanvas, getFloorTextureCanvas, setTextureLoadCallback } from '$lib/utils/textureGenerator';
   import { viewportKind } from '$lib/stores/viewport';
@@ -108,6 +109,7 @@
   let cameraHelper: THREE.Group | null = null;
   let cameraPosition = $state<{ x: number; y: number; z: number }>({ x: 0, y: 160, z: 0 });
   let cameraLookAt = $state<{ x: number; y: number; z: number }>({ x: 100, y: 120, z: 0 });
+  // User-facing horizontal FOV. Three.js expects a vertical FOV, converted below.
   let cameraFOV = $state(90);
   let cameraHeight = $state(160);
   let cameraPreviewOpen = $state(false);
@@ -699,10 +701,12 @@
   }
 
   function updateInteriorCamera() {
+    const verticalFOV = horizontalToVerticalFOV(cameraFOV, CAMERA_PREVIEW_ASPECT);
     if (!interiorCamera) {
-      interiorCamera = new THREE.PerspectiveCamera(cameraFOV, 16 / 9, 1, 5000);
+      interiorCamera = new THREE.PerspectiveCamera(verticalFOV, CAMERA_PREVIEW_ASPECT, 1, 5000);
     }
-    interiorCamera.fov = cameraFOV;
+    interiorCamera.aspect = CAMERA_PREVIEW_ASPECT;
+    interiorCamera.fov = verticalFOV;
     interiorCamera.position.set(cameraPosition.x, cameraHeight, cameraPosition.z);
     
     // Apply yaw (horizontal) and pitch (vertical) rotation to base direction
@@ -2791,6 +2795,7 @@
         data-testid="camera-preview-gesture"
         data-camera-yaw={cameraYaw.toFixed(1)}
         data-camera-fov={cameraFOV}
+        data-camera-projection-fov={horizontalToVerticalFOV(cameraFOV, CAMERA_PREVIEW_ASPECT).toFixed(1)}
         data-camera-x={cameraPosition.x.toFixed(1)}
         data-camera-z={cameraPosition.z.toFixed(1)}
         data-camera-navigate-count={cameraNavigateCount}

@@ -528,6 +528,8 @@ await check('Previous Position restores the camera after entering a room',
   previousPositionWasEnabled &&
   Math.hypot(positionAfterBack.x - positionBeforeNavigate.x, positionAfterBack.z - positionBeforeNavigate.z) < 2);
 await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
+await check('normal 90° uses a corrected ~58.7° vertical projection',
+  Math.abs(Number(await previewGesture.getAttribute('data-camera-projection-fov')) - 58.7) < 0.2);
 await page.getByLabel('AI camera zoom out').tap(); await sleep(250);
 await check('Simulator has a visible zoom-out button', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
 await page.getByLabel('AI camera zoom in').tap(); await sleep(250);
@@ -536,6 +538,8 @@ await previewGesture.dispatchEvent('wheel', { deltaY: 100 }); await sleep(300);
 await check('non-passive wheel listener zooms the AI camera out', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
 await page.getByLabel('AI camera wide angle').tap(); await sleep(300);
 await check('phone has one-tap wide-angle recovery', (await page.getByLabel('AI camera wide angle').getAttribute('class'))?.includes('bg-blue-600'));
+await check('wide 120° stays 120° horizontal rather than becoming ultra-wide',
+  Math.abs(Number(await previewGesture.getAttribute('data-camera-projection-fov')) - 88.5) < 0.2);
 const generateBoxAtTop = await page.getByTestId('ai-render-generate').boundingBox();
 await check('Generate quick draft button stays visible without scrolling', !!generateBoxAtTop && !!aiPanelBox &&
   generateBoxAtTop.y >= aiPanelBox.y && generateBoxAtTop.y + generateBoxAtTop.height <= aiPanelBox.y + aiPanelBox.height);
