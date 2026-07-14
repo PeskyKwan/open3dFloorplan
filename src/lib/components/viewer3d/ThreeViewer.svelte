@@ -43,6 +43,7 @@
   
   // Raycasting for wall selection in 3D
   const raycaster = new THREE.Raycaster();
+  const previewRaycaster = new THREE.Raycaster();
   const mouse = new THREE.Vector2();
   const wallMeshMap = new Map<THREE.Object3D, string>(); // mesh → wallId
   let selectedWallId3D: string | null = null;
@@ -116,7 +117,12 @@
   let cameraXrayWalls = $state(false);
   let previewDragStart: { x: number; y: number; yaw: number; pitch: number } | null = null;
   const previewPointers = new Map<number, { x: number; y: number }>();
+  const previewPointerStarts = new Map<number, { x: number; y: number }>();
   let previewPinchStart: { distance: number; fov: number } | null = null;
+  let previewGestureHadMultiTouch = false;
+  let previewLastTap: { time: number; x: number; y: number } | null = null;
+  let previewSafariPinchFOV: number | null = null;
+  let cameraNavigateCount = $state(0);
   let aiRenderOpen = $state(false);
   let aiRendering = $state(false);
   let aiRenderResult = $state<string | null>(null);
@@ -406,14 +412,108 @@
     return Math.max(50, Math.min(125, Math.round(value)));
   }
 
+  function setCameraFOV(value: number) {
+    cameraFOV = clampCameraFOV(value);
+    cameraPreviewDirty = true;
+  }
+
+  function stepCameraZoom(direction: 'in' | 'out') {
+    setCameraFOV(cameraFOV + (direction === 'out' ? 6 : -6));
+  }
+
+  function previewZoomEvents(node: HTMLElement) {
+    const onWheel = (event: WheelEvent) => previewWheel(event);
+    const onGestureStart = (event: Event) => {
+      event.preventDefault();
+      if (previewPointers.size >= 2) return;
+      previewSafariPinchFOV = cameraFOV;
+    };
+    const onGestureChange = (event: Event) => {
+      event.preventDefault();
+      if (previewSafariPinchFOV === null) return;
+      const scale = Math.max(0.1, Number((event as Event & { scale?: number }).scale ?? 1));
+      setCameraFOV(previewSafariPinchFOV / scale);
+    };
+    const onGestureEnd = (event: Event) => {
+      event.preventDefault();
+      previewSafariPinchFOV = null;
+    };
+
+    node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('gesturestart', onGestureStart, { passive: false });
+    node.addEventListener('gesturechange', onGestureChange, { passive: false });
+    node.addEventListener('gestureend', onGestureEnd, { passive: false });
+
+    return {
+      destroy() {
+        node.removeEventListener('wheel', onWheel);
+        node.removeEventListener('gesturestart', onGestureStart);
+        node.removeEventListener('gesturechange', onGestureChange);
+        node.removeEventListener('gestureend', onGestureEnd);
+      }
+    };
+  }
+
+  function navigateCameraFromPreview(clientX: number, clientY: number, element: HTMLElement) {
+    if (!interiorCamera || !currentFloor) return;
+    updateInteriorCamera();
+
+    const rect = element.getBoundingClientRect();
+    const previewPoint = new THREE.Vector2(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    previewRaycaster.setFromCamera(previewPoint, interiorCamera);
+
+    let destination: THREE.Vector3 | null = null;
+    const floorHit = new THREE.Vector3();
+    if (previewRaycaster.ray.intersectPlane(floorPlane, floorHit)) {
+      destination = floorHit;
+    } else {
+      const flatDirection = new THREE.Vector2(previewRaycaster.ray.direction.x, previewRaycaster.ray.direction.z);
+      if (flatDirection.lengthSq() > 0.0001) {
+        flatDirection.normalize();
+        const roomInfos = detectRooms(currentFloor.walls)
+          .map((room) => ({ polygon: getRoomPolygon(room, currentFloor!.walls) }))
+          .filter((info) => info.polygon.length >= 3);
+        const currentPoint = { x: cameraPosition.x, y: cameraPosition.z };
+        const currentRoom = roomInfos.find((info) => pointInPolygon(currentPoint, info.polygon));
+
+        for (let distance = 80; distance <= 1200; distance += 20) {
+          const point = {
+            x: cameraPosition.x + flatDirection.x * distance,
+            y: cameraPosition.z + flatDirection.y * distance,
+          };
+          const room = roomInfos.find((info) => pointInPolygon(point, info.polygon));
+          if (room && room !== currentRoom) {
+            destination = new THREE.Vector3(point.x, 0, point.y);
+            break;
+          }
+        }
+
+        destination ??= new THREE.Vector3(
+          cameraPosition.x + flatDirection.x * 180,
+          0,
+          cameraPosition.z + flatDirection.y * 180,
+        );
+      }
+    }
+
+    if (!destination) return;
+    placeInteriorCameraAt(destination);
+    cameraNavigateCount += 1;
+  }
+
   function previewPointerDown(e: PointerEvent) {
     e.preventDefault();
     previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    previewPointerStarts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     if (previewPointers.size === 1) {
       previewDragStart = { x: e.clientX, y: e.clientY, yaw: cameraYaw, pitch: cameraPitch };
       previewPinchStart = null;
     } else if (previewPointers.size === 2) {
+      previewGestureHadMultiTouch = true;
       const [a, b] = [...previewPointers.values()];
       previewPinchStart = { distance: Math.hypot(a.x - b.x, a.y - b.y), fov: cameraFOV };
       previewDragStart = null;
@@ -438,7 +538,11 @@
   }
 
   function previewPointerEnd(e: PointerEvent) {
+    const start = previewPointerStarts.get(e.pointerId);
+    const wasSinglePointer = previewPointers.size === 1 && !previewGestureHadMultiTouch;
+    const wasTap = e.type === 'pointerup' && !!start && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 12;
     previewPointers.delete(e.pointerId);
+    previewPointerStarts.delete(e.pointerId);
     if (previewPointers.size === 1) {
       const [remaining] = [...previewPointers.values()];
       previewDragStart = { x: remaining.x, y: remaining.y, yaw: cameraYaw, pitch: cameraPitch };
@@ -447,12 +551,28 @@
       previewDragStart = null;
       previewPinchStart = null;
     }
+
+    if (wasSinglePointer && wasTap) {
+      const now = performance.now();
+      if (
+        previewLastTap
+        && now - previewLastTap.time <= 450
+        && Math.hypot(e.clientX - previewLastTap.x, e.clientY - previewLastTap.y) <= 32
+      ) {
+        previewLastTap = null;
+        navigateCameraFromPreview(e.clientX, e.clientY, e.currentTarget as HTMLElement);
+      } else {
+        previewLastTap = { time: now, x: e.clientX, y: e.clientY };
+      }
+    }
+    if (previewPointers.size === 0) previewGestureHadMultiTouch = false;
   }
 
   function previewWheel(e: WheelEvent) {
     e.preventDefault();
-    cameraFOV = clampCameraFOV(cameraFOV + Math.sign(e.deltaY) * 6);
-    cameraPreviewDirty = true;
+    e.stopPropagation();
+    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (delta !== 0) stepCameraZoom(delta > 0 ? 'out' : 'in');
   }
 
   /** Rebuild the 3D camera marker to match current yaw/pitch/position state */
@@ -745,6 +865,31 @@
     return { position, target };
   }
 
+  function placeInteriorCameraAt(hit: THREE.Vector3) {
+    const placement = safeCameraPlacement(hit);
+    cameraPosition = { x: placement.position.x, y: cameraHeight, z: placement.position.y };
+    const targetDX = placement.target.x - placement.position.x;
+    const targetDZ = placement.target.y - placement.position.y;
+    const targetLen = Math.hypot(targetDX, targetDZ) || 1;
+    cameraBaseDir = { x: targetDX / targetLen, z: targetDZ / targetLen };
+    cameraLookAt = {
+      x: placement.target.x,
+      y: cameraHeight * 0.75,
+      z: placement.target.y,
+    };
+    cameraYaw = 0;
+    cameraPitch = 0;
+    cameraPreviewWarning = null;
+    cameraPlaced = true;
+    updateInteriorCamera();
+    createCameraMarker(
+      new THREE.Vector3(placement.position.x, 0, placement.position.y),
+      new THREE.Vector3(placement.target.x, 0, placement.target.y),
+    );
+    cameraPreviewOpen = true;
+    cameraPreviewDirty = true;
+  }
+
   function beginCameraReposition() {
     cameraPlacementMode = true;
     cameraPlaced = false;
@@ -988,28 +1133,7 @@
         if (raycaster.ray.intersectPlane(floorPlane, hit)) {
           if (!cameraPlaced) {
             // First click: keep the camera inside a room, clear of walls and furniture.
-            const placement = safeCameraPlacement(hit);
-            cameraPosition = { x: placement.position.x, y: cameraHeight, z: placement.position.y };
-            const targetDX = placement.target.x - placement.position.x;
-            const targetDZ = placement.target.y - placement.position.y;
-            const targetLen = Math.hypot(targetDX, targetDZ) || 1;
-            cameraBaseDir = { x: targetDX / targetLen, z: targetDZ / targetLen };
-            cameraLookAt = {
-              x: placement.target.x,
-              y: cameraHeight * 0.75,
-              z: placement.target.y,
-            };
-            cameraYaw = 0;
-            cameraPitch = 0;
-            cameraPreviewWarning = null;
-            cameraPlaced = true;
-            updateInteriorCamera();
-            createCameraMarker(
-              new THREE.Vector3(placement.position.x, 0, placement.position.y),
-              new THREE.Vector3(placement.target.x, 0, placement.target.y),
-            );
-            cameraPreviewOpen = true;
-            cameraPreviewDirty = true;
+            placeInteriorCameraAt(hit);
             if (get(viewportKind) === 'phone') {
               cameraPlacementMode = false;
               editMode = false;
@@ -2662,13 +2786,16 @@
         data-testid="camera-preview-gesture"
         data-camera-yaw={cameraYaw.toFixed(1)}
         data-camera-fov={cameraFOV}
+        data-camera-x={cameraPosition.x.toFixed(1)}
+        data-camera-z={cameraPosition.z.toFixed(1)}
+        data-camera-navigate-count={cameraNavigateCount}
         class="relative cursor-grab active:cursor-grabbing touch-none select-none"
         style="touch-action: none;"
+        use:previewZoomEvents
         onpointerdown={previewPointerDown}
         onpointermove={previewPointerMove}
         onpointerup={previewPointerEnd}
         onpointercancel={previewPointerEnd}
-        onwheel={previewWheel}
       >
         <canvas bind:this={cameraPreviewCanvas} width="384" height="216" class="w-full pointer-events-none"></canvas>
         {#if cameraPreviewWarning}
@@ -2677,7 +2804,7 @@
             <div class="text-[13px] text-slate-300 mt-2">{cameraPreviewWarning}</div>
           </div>
         {:else}
-          <div class="absolute bottom-1 left-2 text-[11px] text-white/70 pointer-events-none">單指拖動轉方向 · 雙指/滾輪縮放</div>
+          <div class="absolute bottom-1 left-2 text-[11px] text-white/80 pointer-events-none">拖動轉方向 · 雙 tap 地板行去嗰度</div>
         {/if}
       </div>
 
@@ -2738,12 +2865,17 @@
             </button>
           </div>
           <div>
-            <div data-testid="camera-fov-value" class="text-[13px] text-slate-400 mb-2">視角 {cameraFOV}°</div>
-            <div class="grid grid-cols-3 gap-2">
-              <button aria-label="AI camera wide angle" onclick={() => { cameraFOV = 120; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 120 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">廣角</button>
-              <button aria-label="AI camera normal angle" onclick={() => { cameraFOV = 90; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 90 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">正常</button>
-              <button aria-label="AI camera close angle" onclick={() => { cameraFOV = 65; cameraPreviewDirty = true; }} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 65 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">近鏡</button>
+            <div class="flex items-center gap-2 mb-2">
+              <div data-testid="camera-fov-value" class="flex-1 text-[13px] text-slate-400">視角 {cameraFOV}°</div>
+              <button aria-label="AI camera zoom out" onclick={() => stepCameraZoom('out')} class="w-11 h-11 rounded-xl bg-[#222d39] text-[23px] font-semibold text-white">−</button>
+              <button aria-label="AI camera zoom in" onclick={() => stepCameraZoom('in')} class="w-11 h-11 rounded-xl bg-[#222d39] text-[23px] font-semibold text-white">＋</button>
             </div>
+            <div class="grid grid-cols-3 gap-2">
+              <button aria-label="AI camera wide angle" onclick={() => setCameraFOV(120)} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 120 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">廣角</button>
+              <button aria-label="AI camera normal angle" onclick={() => setCameraFOV(90)} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 90 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">正常</button>
+              <button aria-label="AI camera close angle" onclick={() => setCameraFOV(65)} class="h-11 rounded-xl text-[14px] font-semibold {cameraFOV === 65 ? 'bg-blue-600 text-white' : 'bg-[#222d39] text-slate-300'}">近鏡</button>
+            </div>
+            <div class="text-[12px] text-slate-500 mt-2">Simulator 可用 −／＋；iPhone 可雙指縮放</div>
           </div>
         </div>
       {/if}
@@ -2917,18 +3049,20 @@
             </div>
           {/if}
 
-          <button
-            data-testid="ai-render-generate"
-            class="w-full px-3 py-2.5 bg-purple-600 text-white font-semibold hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 {$viewportKind === 'phone' ? 'min-h-14 text-[17px] rounded-2xl shadow-xl shadow-purple-950/50' : 'min-h-12 text-sm rounded-xl'}"
-            onclick={runAIRender}
-            disabled={aiRendering}
-          >
-            {#if aiRendering}
-              <span class="animate-spin">⏳</span> 正在生成，通常需要 30–90 秒…
-            {:else}
-              ✨ 生成室內效果圖
-            {/if}
-          </button>
+          {#if $viewportKind !== 'phone'}
+            <button
+              data-testid="ai-render-generate"
+              class="w-full px-3 py-2.5 bg-purple-600 text-white font-semibold hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-h-12 text-sm rounded-xl"
+              onclick={runAIRender}
+              disabled={aiRendering}
+            >
+              {#if aiRendering}
+                <span class="animate-spin">⏳</span> 正在生成，通常需要 30–90 秒…
+              {:else}
+                ✨ 生成室內效果圖
+              {/if}
+            </button>
+          {/if}
 
           {#if aiRendering}
             <button class="w-full text-[13px] text-gray-400 py-2" onclick={cancelAIRender}>取消 render</button>
@@ -2946,6 +3080,24 @@
         </div>
       {/if}
       </div><!-- end camera panel scroller -->
+      {#if $viewportKind === 'phone' && aiRenderOpen}
+        <div class="shrink-0 border-t border-gray-700 bg-[#101720]/95 px-3 py-3 backdrop-blur-sm">
+          <button
+            data-testid="ai-render-generate"
+            class="w-full min-h-14 rounded-2xl bg-purple-600 px-3 py-2.5 text-[17px] font-semibold text-white shadow-xl shadow-purple-950/50 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:bg-purple-500"
+            onclick={runAIRender}
+            disabled={aiRendering}
+          >
+            {#if aiRendering}
+              <span class="animate-spin">⏳</span> 正在生成，通常需要 30–90 秒…
+            {:else if aiRenderQuality === 'high'}
+              ✨ 生成高清效果圖
+            {:else}
+              ✨ 生成快速草圖
+            {/if}
+          </button>
+        </div>
+      {/if}
     </div>
   {/if}
 

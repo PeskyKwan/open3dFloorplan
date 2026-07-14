@@ -452,11 +452,35 @@ if (gestureBox) {
 }
 const yawAfter = Number(await previewGesture.getAttribute('data-camera-yaw'));
 await check('single-finger/mouse drag rotates the AI camera', !!gestureBox && Math.abs(yawAfter - yawBefore) > 5);
+const positionBeforeNavigate = {
+  x: Number(await previewGesture.getAttribute('data-camera-x')),
+  z: Number(await previewGesture.getAttribute('data-camera-z')),
+};
+const navigateCountBefore = Number(await previewGesture.getAttribute('data-camera-navigate-count'));
+if (gestureBox) {
+  await previewGesture.dblclick({ position: { x: gestureBox.width * 0.5, y: gestureBox.height * 0.8 }, delay: 80 });
+  await sleep(500);
+}
+const positionAfterNavigate = {
+  x: Number(await previewGesture.getAttribute('data-camera-x')),
+  z: Number(await previewGesture.getAttribute('data-camera-z')),
+};
+const navigateCountAfter = Number(await previewGesture.getAttribute('data-camera-navigate-count'));
+await check('double tap moves the AI camera toward the tapped floor',
+  !!gestureBox && navigateCountAfter === navigateCountBefore + 1 &&
+  Math.hypot(positionAfterNavigate.x - positionBeforeNavigate.x, positionAfterNavigate.z - positionBeforeNavigate.z) > 10);
 await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
+await page.getByLabel('AI camera zoom out').tap(); await sleep(250);
+await check('Simulator has a visible zoom-out button', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
+await page.getByLabel('AI camera zoom in').tap(); await sleep(250);
+await check('Simulator has a visible zoom-in button', Number(await previewGesture.getAttribute('data-camera-fov')) === 90);
 await previewGesture.dispatchEvent('wheel', { deltaY: 100 }); await sleep(300);
-await check('trackpad/mouse wheel zooms the AI camera out', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
+await check('non-passive wheel listener zooms the AI camera out', Number(await previewGesture.getAttribute('data-camera-fov')) > 90);
 await page.getByLabel('AI camera wide angle').tap(); await sleep(300);
 await check('phone has one-tap wide-angle recovery', (await page.getByLabel('AI camera wide angle').getAttribute('class'))?.includes('bg-blue-600'));
+const generateBoxAtTop = await page.getByTestId('ai-render-generate').boundingBox();
+await check('Generate quick draft button stays visible without scrolling', !!generateBoxAtTop && !!aiPanelBox &&
+  generateBoxAtTop.y >= aiPanelBox.y && generateBoxAtTop.y + generateBoxAtTop.height <= aiPanelBox.y + aiPanelBox.height);
 const scrollState = await aiScroller.evaluate((el) => {
   const max = el.scrollHeight - el.clientHeight;
   el.scrollTop = Math.min(120, max);
