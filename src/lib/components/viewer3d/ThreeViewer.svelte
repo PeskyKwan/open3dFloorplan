@@ -127,6 +127,8 @@
   const previewPointers = new Map<number, { x: number; y: number }>();
   const previewPointerStarts = new Map<number, { x: number; y: number }>();
   let previewPinchStart: { distance: number; fov: number } | null = null;
+  let previewTouchPinchStart: { distance: number; fov: number } | null = null;
+  let previewTouchSequenceActive = false;
   let previewGestureHadMultiTouch = false;
   let previewLastTap: { time: number; x: number; y: number } | null = null;
   let previewSafariPinchFOV: number | null = null;
@@ -486,14 +488,71 @@
 
   function previewZoomEvents(node: HTMLElement) {
     const onWheel = (event: WheelEvent) => previewWheel(event);
+    const touchDistance = (touches: TouchList) => {
+      const a = touches.item(0);
+      const b = touches.item(1);
+      return a && b ? Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)) : 0;
+    };
+    const startTouchPinch = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+      previewTouchSequenceActive = true;
+      previewGestureHadMultiTouch = true;
+      previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+      previewSafariPinchFOV = null;
+      // WKWebView can emit the first touch as a PointerEvent but omit the second.
+      // Once a real multi-touch sequence arrives, let TouchEvents own it completely.
+      previewPointers.clear();
+      previewPointerStarts.clear();
+      previewDragStart = null;
+      previewPinchStart = null;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!previewTouchSequenceActive && event.touches.length < 2) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.touches.length < 2) return;
+      if (!previewTouchPinchStart) {
+        previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+      }
+      const distance = touchDistance(event.touches);
+      setCameraFOV(previewTouchPinchStart.fov * previewTouchPinchStart.distance / distance);
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      if (!previewTouchSequenceActive) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.touches.length >= 2) {
+        // A third finger may have replaced one of the original pair.
+        previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+        return;
+      }
+      previewTouchPinchStart = null;
+      if (event.touches.length === 0) {
+        previewTouchSequenceActive = false;
+        previewGestureHadMultiTouch = false;
+      }
+    };
+    const onTouchCancel = (event: TouchEvent) => {
+      if (!previewTouchSequenceActive) return;
+      event.preventDefault();
+      previewTouchPinchStart = null;
+      previewTouchSequenceActive = false;
+      previewGestureHadMultiTouch = false;
+      previewPointers.clear();
+      previewPointerStarts.clear();
+      previewDragStart = null;
+      previewPinchStart = null;
+    };
     const onGestureStart = (event: Event) => {
       event.preventDefault();
-      if (previewPointers.size >= 2) return;
+      if (previewTouchSequenceActive || previewPointers.size >= 2) return;
       previewSafariPinchFOV = cameraFOV;
     };
     const onGestureChange = (event: Event) => {
       event.preventDefault();
-      if (previewSafariPinchFOV === null) return;
+      if (previewTouchSequenceActive || previewSafariPinchFOV === null) return;
       const scale = Math.max(0.1, Number((event as Event & { scale?: number }).scale ?? 1));
       setCameraFOV(previewSafariPinchFOV / scale);
     };
@@ -503,6 +562,10 @@
     };
 
     node.addEventListener('wheel', onWheel, { passive: false });
+    node.addEventListener('touchstart', startTouchPinch, { passive: false });
+    node.addEventListener('touchmove', onTouchMove, { passive: false });
+    node.addEventListener('touchend', onTouchEnd, { passive: false });
+    node.addEventListener('touchcancel', onTouchCancel, { passive: false });
     node.addEventListener('gesturestart', onGestureStart, { passive: false });
     node.addEventListener('gesturechange', onGestureChange, { passive: false });
     node.addEventListener('gestureend', onGestureEnd, { passive: false });
@@ -510,6 +573,10 @@
     return {
       destroy() {
         node.removeEventListener('wheel', onWheel);
+        node.removeEventListener('touchstart', startTouchPinch);
+        node.removeEventListener('touchmove', onTouchMove);
+        node.removeEventListener('touchend', onTouchEnd);
+        node.removeEventListener('touchcancel', onTouchCancel);
         node.removeEventListener('gesturestart', onGestureStart);
         node.removeEventListener('gesturechange', onGestureChange);
         node.removeEventListener('gestureend', onGestureEnd);
@@ -557,6 +624,7 @@
 
   function previewPointerDown(e: PointerEvent) {
     e.preventDefault();
+    if (e.pointerType === 'touch' && previewTouchSequenceActive) return;
     previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     previewPointerStarts.set(e.pointerId, { x: e.clientX, y: e.clientY });
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -572,6 +640,7 @@
   }
 
   function previewPointerMove(e: PointerEvent) {
+    if (e.pointerType === 'touch' && previewTouchSequenceActive) return;
     if (!previewPointers.has(e.pointerId)) return;
     e.preventDefault();
     previewPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -589,6 +658,11 @@
   }
 
   function previewPointerEnd(e: PointerEvent) {
+    if (e.pointerType === 'touch' && previewTouchSequenceActive) {
+      previewPointers.delete(e.pointerId);
+      previewPointerStarts.delete(e.pointerId);
+      return;
+    }
     const start = previewPointerStarts.get(e.pointerId);
     const wasSinglePointer = previewPointers.size === 1 && !previewGestureHadMultiTouch;
     const wasTap = e.type === 'pointerup' && !!start && Math.hypot(e.clientX - start.x, e.clientY - start.y) <= 12;

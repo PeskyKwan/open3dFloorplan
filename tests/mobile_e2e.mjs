@@ -527,6 +527,43 @@ const positionAfterBack = {
 await check('Previous Position restores the camera after entering a room',
   previousPositionWasEnabled &&
   Math.hypot(positionAfterBack.x - positionBeforeNavigate.x, positionAfterBack.z - positionBeforeNavigate.z) < 2);
+const touchPinchFovBefore = Number(await previewGesture.getAttribute('data-camera-fov'));
+const touchPinchYawBefore = Number(await previewGesture.getAttribute('data-camera-yaw'));
+await previewGesture.evaluate((element) => new Promise((resolve) => {
+  const rect = element.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const mkTouch = (id, x) => new Touch({ identifier: id, target: element, clientX: x, clientY: cy });
+  const fire = (type, touches, changedTouches = touches) => element.dispatchEvent(new TouchEvent(type, {
+    touches,
+    targetTouches: touches,
+    changedTouches,
+    bubbles: true,
+    cancelable: true,
+  }));
+  let radius = 35;
+  let currentTouches = [mkTouch(31, cx - radius), mkTouch(32, cx + radius)];
+  fire('touchstart', currentTouches);
+  let step = 0;
+  const timer = setInterval(() => {
+    step += 1;
+    radius = 35 + step * 10;
+    currentTouches = [mkTouch(31, cx - radius), mkTouch(32, cx + radius)];
+    fire('touchmove', currentTouches);
+    if (step >= 6) {
+      clearInterval(timer);
+      fire('touchend', [], currentTouches);
+      resolve(true);
+    }
+  }, 20);
+}));
+await sleep(300);
+const touchPinchFovAfter = Number(await previewGesture.getAttribute('data-camera-fov'));
+const touchPinchYawAfter = Number(await previewGesture.getAttribute('data-camera-yaw'));
+await check('native two-finger TouchEvent pinch zooms the AI camera exactly once',
+  touchPinchFovAfter < touchPinchFovBefore - 10 && touchPinchFovAfter > 35);
+await check('two-finger AI camera pinch does not rotate the view',
+  Math.abs(touchPinchYawAfter - touchPinchYawBefore) < 0.1);
 await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
 await check('normal 90° uses a corrected ~58.7° vertical projection',
   Math.abs(Number(await previewGesture.getAttribute('data-camera-projection-fov')) - 58.7) < 0.2);
