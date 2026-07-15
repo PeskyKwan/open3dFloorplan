@@ -12,6 +12,126 @@ interface Edge {
   end: Point;
 }
 
+const ROOM_CLOSURE_MAX_GAP = 130;
+const ROOM_CLOSURE_ALIGNMENT = Math.cos(15 * Math.PI / 180);
+const VIRTUAL_ROOM_EDGE_PREFIX = '__room-gap-';
+
+interface DanglingEndpoint {
+  key: string;
+  point: Point;
+  away: Point;
+  wallId: string;
+}
+
+function edgeLength(edge: Edge): number {
+  return Math.hypot(edge.end.x - edge.start.x, edge.end.y - edge.start.y);
+}
+
+function cross(a: Point, b: Point): number {
+  return a.x * b.y - a.y * b.x;
+}
+
+/**
+ * RoomPlan commonly splits a wall around an open doorway, or stops a partition
+ * at the doorway instead of extending it to the adjoining wall. Those gaps are
+ * real walkable openings, but a pure graph-cycle detector sees an open loop and
+ * loses the whole floor. Create short, tightly aligned virtual edges for room
+ * detection only; the real wall/door geometry remains untouched.
+ */
+function inferVirtualRoomEdges(edges: Edge[]): Wall[] {
+  const usable = edges.filter(edge => edgeLength(edge) >= EPSILON);
+  const degree = (point: Point) => usable.reduce((count, edge) =>
+    count + (ptEq(edge.start, point) ? 1 : 0) + (ptEq(edge.end, point) ? 1 : 0), 0);
+  const dangling: DanglingEndpoint[] = [];
+
+  for (let index = 0; index < usable.length; index++) {
+    const edge = usable[index];
+    const length = edgeLength(edge);
+    for (const [side, point, other] of [
+      ['start', edge.start, edge.end] as const,
+      ['end', edge.end, edge.start] as const,
+    ]) {
+      if (degree(point) !== 1) continue;
+      dangling.push({
+        key: `${index}-${side}`,
+        point,
+        away: { x: (point.x - other.x) / length, y: (point.y - other.y) / length },
+        wallId: edge.wallId,
+      });
+    }
+  }
+
+  type ClosureCandidate = {
+    source: DanglingEndpoint;
+    target: Point;
+    targetEndpoint?: DanglingEndpoint;
+    distance: number;
+  };
+  const candidates: ClosureCandidate[] = [];
+
+  // A doorway between two collinear wall fragments.
+  for (let i = 0; i < dangling.length; i++) {
+    for (let j = i + 1; j < dangling.length; j++) {
+      const a = dangling[i];
+      const b = dangling[j];
+      if (a.wallId === b.wallId) continue;
+      const dx = b.point.x - a.point.x;
+      const dy = b.point.y - a.point.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance < EPSILON || distance > ROOM_CLOSURE_MAX_GAP) continue;
+      const direction = { x: dx / distance, y: dy / distance };
+      const aAligned = a.away.x * direction.x + a.away.y * direction.y >= ROOM_CLOSURE_ALIGNMENT;
+      const bAligned = b.away.x * -direction.x + b.away.y * -direction.y >= ROOM_CLOSURE_ALIGNMENT;
+      if (aAligned && bAligned) {
+        candidates.push({ source: a, target: b.point, targetEndpoint: b, distance });
+      }
+    }
+  }
+
+  // A partition that stops at a doorway before reaching the adjoining wall.
+  for (const endpoint of dangling) {
+    for (const edge of usable) {
+      if (edge.wallId === endpoint.wallId) continue;
+      const segment = { x: edge.end.x - edge.start.x, y: edge.end.y - edge.start.y };
+      const denominator = cross(endpoint.away, segment);
+      if (Math.abs(denominator) < 1e-8) continue;
+      const offset = { x: edge.start.x - endpoint.point.x, y: edge.start.y - endpoint.point.y };
+      const distance = cross(offset, segment) / denominator;
+      const segmentT = cross(offset, endpoint.away) / denominator;
+      if (distance < EPSILON || distance > ROOM_CLOSURE_MAX_GAP) continue;
+      if (segmentT < -0.001 || segmentT > 1.001) continue;
+      candidates.push({
+        source: endpoint,
+        target: {
+          x: endpoint.point.x + endpoint.away.x * distance,
+          y: endpoint.point.y + endpoint.away.y * distance,
+        },
+        distance,
+      });
+    }
+  }
+
+  candidates.sort((a, b) => a.distance - b.distance);
+  const usedEndpoints = new Set<string>();
+  const accepted: ClosureCandidate[] = [];
+  for (const candidate of candidates) {
+    if (usedEndpoints.has(candidate.source.key)) continue;
+    if (candidate.targetEndpoint && usedEndpoints.has(candidate.targetEndpoint.key)) continue;
+    usedEndpoints.add(candidate.source.key);
+    if (candidate.targetEndpoint) usedEndpoints.add(candidate.targetEndpoint.key);
+    accepted.push(candidate);
+  }
+
+  return accepted.map((candidate, index) => ({
+    id: `${VIRTUAL_ROOM_EDGE_PREFIX}${index}`,
+    start: candidate.source.point,
+    end: candidate.target,
+    thickness: 0,
+    height: 0,
+    color: '#000000',
+  }));
+}
+
 /**
  * Find points where one wall's endpoint lands on another wall's interior (T-junctions).
  * Split such walls into sub-segments so the graph correctly represents all connections.
@@ -95,7 +215,11 @@ export function detectRooms(walls: Wall[]): Room[] {
   if (walls.length < 3) return [];
 
   // Split walls at T-junctions so shared-wall rooms are properly separated
-  const splitEdges = splitWallsAtTJunctions(walls);
+  const initialEdges = splitWallsAtTJunctions(walls);
+  const virtualEdges = inferVirtualRoomEdges(initialEdges);
+  const splitEdges = virtualEdges.length > 0
+    ? splitWallsAtTJunctions([...walls, ...virtualEdges])
+    : initialEdges;
 
   // Build adjacency: collect unique vertices & edges
   const vertices: Point[] = [];
@@ -216,12 +340,15 @@ export function detectRooms(walls: Wall[]): Room[] {
       const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
 
       // Check if this room overlaps with existing (same walls)
-      const uniqueWalls = [...new Set(wallIds)];
+      const boundaryWalls = [...new Set(wallIds)];
       const dup = rooms.some(r => {
         const rw = new Set(r.walls);
-        return uniqueWalls.length === rw.size && uniqueWalls.every(w => rw.has(w));
+        const realBoundaryWalls = boundaryWalls.filter(id => !id.startsWith(VIRTUAL_ROOM_EDGE_PREFIX));
+        return realBoundaryWalls.length === rw.size && realBoundaryWalls.every(w => rw.has(w));
       });
       if (dup) continue;
+
+      const uniqueWalls = boundaryWalls.filter(id => !id.startsWith(VIRTUAL_ROOM_EDGE_PREFIX));
 
       roomCount++;
       rooms.push({
