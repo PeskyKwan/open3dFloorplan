@@ -1,14 +1,18 @@
 const DEFAULT_AI_RENDER_ENDPOINT =
   'https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender';
+const DEFAULT_OPENAI_RENDER_ENDPOINT =
+  'https://us-central1-openplan3d-55cb6.cloudfunctions.net/aiRenderOpenAIComparison';
 
 export const AI_RENDER_ACCESS_TOKEN_KEY = 'o3d_ai_render_access_token';
 
 export type AIRenderQuality = 'low' | 'high';
+export type AIRenderProvider = 'nano-banana-2' | 'gpt-image-2';
 
 export interface AIRenderRequest {
   imageDataUrl: string;
   prompt: string;
   quality: AIRenderQuality;
+  provider: AIRenderProvider;
   accessToken: string;
   signal?: AbortSignal;
 }
@@ -20,7 +24,17 @@ interface AIRenderResponse {
   error?: string;
 }
 
-export function getAIRenderEndpoint(): string {
+export interface AIRenderResult {
+  dataUrl: string;
+  model: string;
+  provider: AIRenderProvider;
+}
+
+export function getAIRenderEndpoint(provider: AIRenderProvider = 'nano-banana-2'): string {
+  if (provider === 'gpt-image-2') {
+    const configured = import.meta.env.VITE_OPENAI_RENDER_API_URL?.trim();
+    return configured || DEFAULT_OPENAI_RENDER_ENDPOINT;
+  }
   const configured = import.meta.env.VITE_AI_RENDER_API_URL?.trim();
   return configured || DEFAULT_AI_RENDER_ENDPOINT;
 }
@@ -37,8 +51,8 @@ export function saveAIRenderAccessToken(token: string): void {
   else localStorage.removeItem(AI_RENDER_ACCESS_TOKEN_KEY);
 }
 
-export async function requestAIRender(input: AIRenderRequest): Promise<string> {
-  const response = await fetch(getAIRenderEndpoint(), {
+export async function requestAIRender(input: AIRenderRequest): Promise<AIRenderResult> {
+  const response = await fetch(getAIRenderEndpoint(input.provider), {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${input.accessToken.trim()}`,
@@ -66,5 +80,9 @@ export async function requestAIRender(input: AIRenderRequest): Promise<string> {
     throw new Error('AI Render server returned no image. Please try again.');
   }
 
-  return `data:${data.mimeType || 'image/jpeg'};base64,${data.imageBase64}`;
+  return {
+    dataUrl: `data:${data.mimeType || 'image/jpeg'};base64,${data.imageBase64}`,
+    model: data.model || input.provider,
+    provider: input.provider,
+  };
 }

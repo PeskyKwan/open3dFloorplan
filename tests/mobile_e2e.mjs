@@ -389,6 +389,7 @@ await page.getByLabel('3D 睇').tap(); await sleep(4000);
 await check('3D loads (平面 tab stays visible)', await page.getByLabel('平面 Plan').count() > 0);
 
 let renderRequest = null;
+let gptRenderRequest = null;
 let renderAttempt = 0;
 await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRender', async (route) => {
   renderAttempt++;
@@ -411,6 +412,21 @@ await page.route('https://asia-east2-openplan3d-55cb6.cloudfunctions.net/aiRende
       imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
       mimeType: 'image/png',
       model: 'gemini-3.1-flash-image',
+    }),
+  });
+});
+await page.route('https://us-central1-openplan3d-55cb6.cloudfunctions.net/aiRenderOpenAIComparison', async (route) => {
+  gptRenderRequest = {
+    authorization: route.request().headers().authorization,
+    body: route.request().postDataJSON(),
+  };
+  await route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      mimeType: 'image/png',
+      model: 'gpt-image-2',
     }),
   });
 });
@@ -564,6 +580,8 @@ await check('native two-finger TouchEvent pinch zooms the AI camera exactly once
   touchPinchFovAfter < touchPinchFovBefore - 10 && touchPinchFovAfter > 35);
 await check('two-finger AI camera pinch does not rotate the view',
   Math.abs(touchPinchYawAfter - touchPinchYawBefore) < 0.1);
+await check('captured iPhone pinch shows visible touch diagnostics',
+  await page.getByTestId('camera-pinch-detected').count() === 1);
 await page.getByLabel('AI camera normal angle').tap(); await sleep(150);
 await check('normal 90° uses a corrected ~58.7° vertical projection',
   Math.abs(Number(await previewGesture.getAttribute('data-camera-projection-fov')) - 58.7) < 0.2);
@@ -594,9 +612,27 @@ await sleep(700);
 await check('mobile app sends only beta code to secure backend', renderRequest?.authorization === 'Bearer e2e-beta-code');
 await check('draft render sends low quality + a real camera preview', renderRequest?.body?.quality === 'low' && renderRequest?.body?.imageDataUrl?.startsWith('data:image/png;base64,') && renderRequest.body.imageDataUrl.length > 10000);
 await check('mock Nano Banana 2 result displays', await page.getByAltText('AI Render').count() === 1);
+await check('successful Nano render is auto-saved to local history',
+  (await page.getByTestId('ai-render-history-toggle').textContent())?.includes('1'));
 const aiPanelAfterRender = await page.getByTestId('ai-camera-panel').boundingBox();
 await check('result scroll keeps the sheet horizontally aligned', !!aiPanelAfterRender && aiPanelAfterRender.x >= 0 && aiPanelAfterRender.x + aiPanelAfterRender.width <= 428);
 await page.getByText('再整一張').tap();
+await page.getByLabel('Use GPT Image 2').tap();
+await page.getByTestId('ai-render-generate').tap();
+await page.getByAltText('AI Render').waitFor({ timeout: 5000 });
+await sleep(500);
+await check('GPT Image 2 choice uses only the protected US comparison endpoint',
+  gptRenderRequest?.authorization === 'Bearer e2e-beta-code' && gptRenderRequest?.body?.quality === 'low');
+await check('successful GPT render is also auto-saved',
+  (await page.getByTestId('ai-render-history-toggle').textContent())?.includes('2'));
+await page.getByTestId('ai-render-history-toggle').tap();
+await check('saved AI history can retrieve both provider results later',
+  await page.getByAltText('Saved AI Render').count() === 2);
+await page.getByAltText('Saved AI Render').first().tap();
+await check('tapping an AI history thumbnail restores the full result',
+  await page.getByTestId('ai-render-result').getByAltText('AI Render', { exact: true }).count() === 1);
+await page.getByText('再整一張').tap();
+await page.getByLabel('Use Nano Banana 2').tap();
 await page.getByTestId('ai-render-generate').tap();
 const errorCard = page.getByTestId('ai-render-error');
 await errorCard.waitFor({ timeout: 5000 });

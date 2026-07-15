@@ -30,8 +30,15 @@
     getAIRenderAccessToken,
     requestAIRender,
     saveAIRenderAccessToken,
+    type AIRenderProvider,
     type AIRenderQuality,
   } from '$lib/services/aiRender';
+  import {
+    deleteAIRenderHistory,
+    listAIRenderHistory,
+    saveAIRenderHistory,
+    type AIRenderHistoryEntry,
+  } from '$lib/services/aiRenderHistory';
 
   let container: HTMLDivElement;
   let renderer: THREE.WebGLRenderer;
@@ -130,6 +137,8 @@
   let previewTouchPinchStart: { distance: number; fov: number } | null = null;
   let previewTouchSequenceActive = false;
   let previewGestureHadMultiTouch = false;
+  let previewGestureNotice = $state<string | null>(null);
+  let previewGestureNoticeTimer: ReturnType<typeof setTimeout> | null = null;
   let previewLastTap: { time: number; x: number; y: number } | null = null;
   let previewSafariPinchFOV: number | null = null;
   let cameraNavigateCount = $state(0);
@@ -155,6 +164,10 @@
   let aiRenderMood = $state('warm and inviting');
   let aiRenderExtra = $state('');
   let aiRenderQuality = $state<AIRenderQuality>('low');
+  let aiServerProvider = $state<AIRenderProvider>('nano-banana-2');
+  let aiRenderHistory = $state<AIRenderHistoryEntry[]>([]);
+  let aiRenderHistoryOpen = $state(false);
+  let aiRenderHistoryError = $state<string | null>(null);
   const initialAIAccessCode = getAIRenderAccessToken();
   let aiAccessCode = $state(initialAIAccessCode);
   let aiAccessCodeVisible = $state(false);
@@ -178,6 +191,57 @@
     aiAccessCodeEditing = !aiAccessCode;
     aiAccessCodeSaved = true;
     setTimeout(() => { aiAccessCodeSaved = false; }, 2000);
+  }
+
+  function aiProviderName(provider: AIRenderProvider = aiServerProvider) {
+    return provider === 'gpt-image-2' ? 'GPT Image 2' : 'Nano Banana 2';
+  }
+
+  async function loadSavedAIRenders() {
+    const project = get(currentProject);
+    if (!project) return;
+    try {
+      aiRenderHistory = await listAIRenderHistory(project.id);
+      aiRenderHistoryError = null;
+    } catch {
+      aiRenderHistoryError = '未能讀取本機 AI 圖歷史。';
+    }
+  }
+
+  async function saveGeneratedAIRender(result: string, model: string, provider: AIRenderProvider) {
+    const project = get(currentProject);
+    if (!project) return;
+    try {
+      await saveAIRenderHistory({
+        projectId: project.id,
+        projectName: project.name,
+        imageDataUrl: result,
+        provider,
+        model,
+        quality: aiRenderQuality,
+        style: aiRenderStyle,
+        roomLabel: cameraRoomLabel,
+      });
+      await loadSavedAIRenders();
+    } catch {
+      aiRenderHistoryError = '圖片已生成，但未能自動保存到本機歷史；請即刻按「分享 / 儲存」。';
+    }
+  }
+
+  async function showSavedAIRender(entry: AIRenderHistoryEntry) {
+    aiRenderResult = entry.imageDataUrl;
+    aiRenderError = null;
+    await revealAIRenderFeedback();
+  }
+
+  async function removeSavedAIRender(entry: AIRenderHistoryEntry) {
+    try {
+      await deleteAIRenderHistory(entry.id);
+      aiRenderHistory = aiRenderHistory.filter((item) => item.id !== entry.id);
+      if (aiRenderResult === entry.imageDataUrl) aiRenderResult = null;
+    } catch {
+      aiRenderHistoryError = '暫時未能刪除呢張歷史圖片。';
+    }
   }
 
   function buildAIPrompt(): string {
@@ -365,13 +429,16 @@
     try {
       const imageDataUrl = captureSceneBase64(1024, 576);
       const prompt = buildAIPrompt();
-      aiRenderResult = await requestAIRender({
+      const result = await requestAIRender({
         imageDataUrl,
         prompt,
         quality: aiRenderQuality,
+        provider: aiServerProvider,
         accessToken,
         signal: aiAbortController.signal,
       });
+      aiRenderResult = result.dataUrl;
+      await saveGeneratedAIRender(result.dataUrl, result.model, result.provider);
       await revealAIRenderFeedback();
     } catch (e: any) {
       aiRenderError = e?.name === 'AbortError' ? 'Render 已取消。' : (e?.message ?? 'AI Render failed.');
@@ -486,21 +553,57 @@
     showCameraNavigationNotice('已返回上一個位置。');
   }
 
+  function showPreviewGestureNotice(message: string) {
+    previewGestureNotice = message;
+    if (previewGestureNoticeTimer) clearTimeout(previewGestureNoticeTimer);
+    previewGestureNoticeTimer = setTimeout(() => {
+      previewGestureNotice = null;
+      previewGestureNoticeTimer = null;
+    }, 1600);
+  }
+
   function previewZoomEvents(node: HTMLElement) {
     const onWheel = (event: WheelEvent) => previewWheel(event);
-    const touchDistance = (touches: TouchList) => {
-      const a = touches.item(0);
-      const b = touches.item(1);
+    const captureOptions: AddEventListenerOptions = { passive: false, capture: true };
+    const gestureTarget = document as EventTarget;
+    let activeTouchIds: [number, number] | null = null;
+    const touchesAsArray = (touches: TouchList) => {
+      const result: Touch[] = [];
+      for (let i = 0; i < touches.length; i++) {
+        const touch = touches.item(i);
+        if (touch) result.push(touch);
+      }
+      return result;
+    };
+    const touchesInsidePreview = (touches: TouchList) => {
+      const rect = node.getBoundingClientRect();
+      return touchesAsArray(touches).filter((touch) => (
+        touch.clientX >= rect.left && touch.clientX <= rect.right
+        && touch.clientY >= rect.top && touch.clientY <= rect.bottom
+      ));
+    };
+    const activeTouches = (touches: TouchList) => {
+      const all = touchesAsArray(touches);
+      if (!activeTouchIds) return all.slice(0, 2);
+      return activeTouchIds
+        .map((id) => all.find((touch) => touch.identifier === id))
+        .filter((touch): touch is Touch => !!touch);
+    };
+    const touchDistance = (touches: Touch[]) => {
+      const [a, b] = touches;
       return a && b ? Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)) : 0;
     };
     const startTouchPinch = (event: TouchEvent) => {
-      if (event.touches.length < 2) return;
+      const inside = touchesInsidePreview(event.touches);
+      if (inside.length < 2) return;
       event.preventDefault();
       event.stopPropagation();
+      activeTouchIds = [inside[0].identifier, inside[1].identifier];
       previewTouchSequenceActive = true;
       previewGestureHadMultiTouch = true;
-      previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+      previewTouchPinchStart = { distance: touchDistance(inside), fov: cameraFOV };
       previewSafariPinchFOV = null;
+      showPreviewGestureNotice('雙指已偵測 ✓');
       // WKWebView can emit the first touch as a PointerEvent but omit the second.
       // Once a real multi-touch sequence arrives, let TouchEvents own it completely.
       previewPointers.clear();
@@ -513,10 +616,12 @@
       event.preventDefault();
       event.stopPropagation();
       if (event.touches.length < 2) return;
+      const pair = activeTouches(event.touches);
+      if (pair.length < 2) return;
       if (!previewTouchPinchStart) {
-        previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+        previewTouchPinchStart = { distance: touchDistance(pair), fov: cameraFOV };
       }
-      const distance = touchDistance(event.touches);
+      const distance = touchDistance(pair);
       setCameraFOV(previewTouchPinchStart.fov * previewTouchPinchStart.distance / distance);
     };
     const onTouchEnd = (event: TouchEvent) => {
@@ -525,11 +630,14 @@
       event.stopPropagation();
       if (event.touches.length >= 2) {
         // A third finger may have replaced one of the original pair.
-        previewTouchPinchStart = { distance: touchDistance(event.touches), fov: cameraFOV };
+        const pair = touchesAsArray(event.touches).slice(0, 2);
+        activeTouchIds = [pair[0].identifier, pair[1].identifier];
+        previewTouchPinchStart = { distance: touchDistance(pair), fov: cameraFOV };
         return;
       }
       previewTouchPinchStart = null;
       if (event.touches.length === 0) {
+        activeTouchIds = null;
         previewTouchSequenceActive = false;
         previewGestureHadMultiTouch = false;
       }
@@ -537,6 +645,7 @@
     const onTouchCancel = (event: TouchEvent) => {
       if (!previewTouchSequenceActive) return;
       event.preventDefault();
+      activeTouchIds = null;
       previewTouchPinchStart = null;
       previewTouchSequenceActive = false;
       previewGestureHadMultiTouch = false;
@@ -545,10 +654,20 @@
       previewDragStart = null;
       previewPinchStart = null;
     };
+    const gestureStartsInsidePreview = (event: Event) => {
+      if (event.target instanceof Node && node.contains(event.target)) return true;
+      const gesture = event as Event & { clientX?: number; clientY?: number };
+      if (!Number.isFinite(gesture.clientX) || !Number.isFinite(gesture.clientY)) return false;
+      const rect = node.getBoundingClientRect();
+      return (gesture.clientX as number) >= rect.left && (gesture.clientX as number) <= rect.right
+        && (gesture.clientY as number) >= rect.top && (gesture.clientY as number) <= rect.bottom;
+    };
     const onGestureStart = (event: Event) => {
+      if (!gestureStartsInsidePreview(event)) return;
       event.preventDefault();
       if (previewTouchSequenceActive || previewPointers.size >= 2) return;
       previewSafariPinchFOV = cameraFOV;
+      showPreviewGestureNotice('雙指已偵測 ✓');
     };
     const onGestureChange = (event: Event) => {
       event.preventDefault();
@@ -562,24 +681,32 @@
     };
 
     node.addEventListener('wheel', onWheel, { passive: false });
-    node.addEventListener('touchstart', startTouchPinch, { passive: false });
-    node.addEventListener('touchmove', onTouchMove, { passive: false });
-    node.addEventListener('touchend', onTouchEnd, { passive: false });
-    node.addEventListener('touchcancel', onTouchCancel, { passive: false });
-    node.addEventListener('gesturestart', onGestureStart, { passive: false });
-    node.addEventListener('gesturechange', onGestureChange, { passive: false });
-    node.addEventListener('gestureend', onGestureEnd, { passive: false });
+    document.addEventListener('touchstart', startTouchPinch, captureOptions);
+    document.addEventListener('touchmove', onTouchMove, captureOptions);
+    document.addEventListener('touchend', onTouchEnd, captureOptions);
+    document.addEventListener('touchcancel', onTouchCancel, captureOptions);
+    gestureTarget.addEventListener('gesturestart', onGestureStart, captureOptions);
+    gestureTarget.addEventListener('gesturechange', onGestureChange, captureOptions);
+    gestureTarget.addEventListener('gestureend', onGestureEnd, captureOptions);
 
     return {
       destroy() {
         node.removeEventListener('wheel', onWheel);
-        node.removeEventListener('touchstart', startTouchPinch);
-        node.removeEventListener('touchmove', onTouchMove);
-        node.removeEventListener('touchend', onTouchEnd);
-        node.removeEventListener('touchcancel', onTouchCancel);
-        node.removeEventListener('gesturestart', onGestureStart);
-        node.removeEventListener('gesturechange', onGestureChange);
-        node.removeEventListener('gestureend', onGestureEnd);
+        document.removeEventListener('touchstart', startTouchPinch, captureOptions);
+        document.removeEventListener('touchmove', onTouchMove, captureOptions);
+        document.removeEventListener('touchend', onTouchEnd, captureOptions);
+        document.removeEventListener('touchcancel', onTouchCancel, captureOptions);
+        gestureTarget.removeEventListener('gesturestart', onGestureStart, captureOptions);
+        gestureTarget.removeEventListener('gesturechange', onGestureChange, captureOptions);
+        gestureTarget.removeEventListener('gestureend', onGestureEnd, captureOptions);
+        activeTouchIds = null;
+        previewTouchPinchStart = null;
+        previewTouchSequenceActive = false;
+        previewSafariPinchFOV = null;
+        previewGestureHadMultiTouch = false;
+        if (previewGestureNoticeTimer) clearTimeout(previewGestureNoticeTimer);
+        previewGestureNoticeTimer = null;
+        previewGestureNotice = null;
       }
     };
   }
@@ -636,6 +763,7 @@
       const [a, b] = [...previewPointers.values()];
       previewPinchStart = { distance: Math.hypot(a.x - b.x, a.y - b.y), fov: cameraFOV };
       previewDragStart = null;
+      showPreviewGestureNotice('雙指已偵測 ✓');
     }
   }
 
@@ -991,6 +1119,7 @@
 
     aiRenderOpen = true;
     aiRenderError = null;
+    void loadSavedAIRenders();
     if (cameraPlaced) {
       cameraPlacementMode = false;
       cameraPreviewOpen = true;
@@ -2965,6 +3094,9 @@
           <div>
             <div class="flex items-center gap-2 mb-2">
               <div data-testid="camera-fov-value" class="flex-1 text-[13px] text-slate-400">視角 {cameraFOV}°</div>
+              {#if previewGestureNotice}
+                <span data-testid="camera-pinch-detected" class="text-[11px] font-semibold text-emerald-300">{previewGestureNotice}</span>
+              {/if}
               <button aria-label="AI camera zoom out" onclick={() => stepCameraZoom('out')} class="w-11 h-11 rounded-xl bg-[#222d39] text-[23px] font-semibold text-white">−</button>
               <button aria-label="AI camera zoom in" onclick={() => stepCameraZoom('in')} class="w-11 h-11 rounded-xl bg-[#222d39] text-[23px] font-semibold text-white">＋</button>
             </div>
@@ -2986,9 +3118,16 @@
               <div class="{$viewportKind === 'phone' ? 'text-[17px]' : 'text-sm'} font-semibold text-white">揀一個風格</div>
               <div class="{$viewportKind === 'phone' ? 'text-[13px]' : 'text-[10px]'} text-gray-400 mt-0.5">保留間隔、傢俬同相機角度</div>
             </div>
-            <span class="shrink-0 rounded-full bg-emerald-900/50 border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300">
-              {$viewportKind === 'phone' || aiProvider === 'server' ? 'Nano Banana 2' : 'Gemini'}
-            </span>
+            <div class="flex shrink-0 items-center gap-2">
+              <button
+                data-testid="ai-render-history-toggle"
+                class="rounded-full border border-gray-600 bg-gray-800 px-2 py-1 text-[10px] text-gray-300"
+                onclick={() => { aiRenderHistoryOpen = !aiRenderHistoryOpen; if (aiRenderHistoryOpen) void loadSavedAIRenders(); }}
+              >歷史 {aiRenderHistory.length}</button>
+              <span class="rounded-full bg-emerald-900/50 border border-emerald-700 px-2 py-1 text-[10px] text-emerald-300">
+                {$viewportKind === 'phone' || aiProvider === 'server' ? aiProviderName() : 'Gemini'}
+              </span>
+            </div>
           </div>
 
           <!-- Provider toggle -->
@@ -3002,6 +3141,21 @@
                 class="flex-1 text-xs py-1.5 font-medium transition-colors {aiProvider === 'server' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400 hover:text-gray-200'}"
                 onclick={() => { aiProvider = 'server'; }}
               >Nano Banana 2 · Secure server</button>
+            </div>
+          {/if}
+
+          {#if $viewportKind === 'phone' || aiProvider === 'server'}
+            <div data-testid="ai-render-provider" class="grid grid-cols-2 gap-2 rounded-2xl border border-gray-700 bg-gray-800/60 p-2">
+              <button
+                aria-label="Use Nano Banana 2"
+                class="min-h-12 rounded-xl px-2 text-[13px] font-semibold {aiServerProvider === 'nano-banana-2' ? 'bg-emerald-700 text-white' : 'bg-gray-900 text-gray-400'}"
+                onclick={() => { aiServerProvider = 'nano-banana-2'; }}
+              >Nano Banana 2</button>
+              <button
+                aria-label="Use GPT Image 2"
+                class="min-h-12 rounded-xl px-2 text-[13px] font-semibold {aiServerProvider === 'gpt-image-2' ? 'bg-blue-600 text-white' : 'bg-gray-900 text-gray-400'}"
+                onclick={() => { aiServerProvider = 'gpt-image-2'; }}
+              >GPT Image 2</button>
             </div>
           {/if}
 
@@ -3107,7 +3261,7 @@
                   </button>
                 </div>
               {/if}
-              <p class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} leading-relaxed text-gray-500">AI model 由 Firebase server 用 Google Cloud IAM 呼叫；iPhone 冇 API key。</p>
+              <p class="{$viewportKind === 'phone' ? 'text-[12px]' : 'text-[10px]'} leading-relaxed text-gray-500">AI model 由安全 Firebase server 呼叫；iPhone 冇 Google／OpenAI API key。</p>
             </div>
 
             <div>
@@ -3144,6 +3298,39 @@
                 class="text-[13px] text-red-300 hover:text-red-200 underline"
                 onclick={() => { navigator.clipboard.writeText(aiRenderError ?? ''); }}
               >📋 Copy error</button>
+            </div>
+          {/if}
+
+          {#if aiRenderHistoryError}
+            <div class="rounded-xl border border-amber-700/70 bg-amber-950/30 p-2 text-[12px] text-amber-200">{aiRenderHistoryError}</div>
+          {/if}
+
+          {#if aiRenderHistoryOpen}
+            <div data-testid="ai-render-history" class="space-y-2 rounded-2xl border border-gray-700 bg-gray-900/60 p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-[14px] font-semibold text-white">最近生成</span>
+                <span class="text-[11px] text-gray-500">本機保存，最多 12 張</span>
+              </div>
+              {#if aiRenderHistory.length === 0}
+                <div class="py-4 text-center text-[12px] text-gray-500">未有已保存 AI 圖</div>
+              {:else}
+                <div class="grid grid-cols-2 gap-2">
+                  {#each aiRenderHistory as entry}
+                    <div class="overflow-hidden rounded-xl border border-gray-700 bg-gray-800">
+                      <button class="block w-full" onclick={() => { void showSavedAIRender(entry); }} aria-label="Open saved AI render">
+                        <img src={entry.imageDataUrl} alt="Saved AI Render" class="aspect-video w-full object-cover" />
+                      </button>
+                      <div class="flex items-center gap-1 px-2 py-1.5">
+                        <div class="min-w-0 flex-1">
+                          <div class="truncate text-[10px] font-medium text-gray-300">{aiProviderName(entry.provider)} · {entry.quality === 'high' ? '高清' : '快速'}</div>
+                          <div class="truncate text-[9px] text-gray-500">{new Date(entry.createdAt).toLocaleString('zh-HK')}</div>
+                        </div>
+                        <button class="p-1 text-[12px] text-red-400" onclick={() => { void removeSavedAIRender(entry); }} aria-label="Delete saved AI render">刪除</button>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
             </div>
           {/if}
 
@@ -3189,9 +3376,9 @@
             {#if aiRendering}
               <span class="animate-spin">⏳</span> 正在生成，通常需要 30–90 秒…
             {:else if aiRenderQuality === 'high'}
-              ✨ 生成高清效果圖
+              ✨ 用 {aiProviderName()} 生成高清圖
             {:else}
-              ✨ 生成快速草圖
+              ✨ 用 {aiProviderName()} 生成快速草圖
             {/if}
           </button>
         </div>
